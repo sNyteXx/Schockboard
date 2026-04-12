@@ -44,9 +44,9 @@ Die App läuft vollständig lokal auf dem Gerät (SQLite), ohne Cloud-Backend.
 
 - Automatische Zuschläge für abwesende Stammspieler beim Abschließen
 - Unterstützte Modi:
-	- kein Zuschlag
-	- voller Durchschnitt
-	- auf Abwesende aufgeteilter Durchschnitt
+  - kein Zuschlag
+  - voller Durchschnitt
+  - auf Abwesende aufgeteilter Durchschnitt
 - Hausregel-Profil inkl. Schock-spezifischer Hinweise
 
 ### Historie & Korrekturen
