@@ -1,58 +1,67 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { ActivityIndicator, Alert, SafeAreaView, StyleSheet, Text } from "react-native";
+import { createContext, useContext, useEffect, useState } from 'react'
+import { ActivityIndicator, Alert, SafeAreaView, StyleSheet, Text } from 'react-native'
 
-import type { AuthAccount, FlashMessage, ThemeId, ViewMode } from "@/domain/types";
-import { DatabaseService } from "@/services/database-service";
-import { AuthService } from "@/services/auth-service";
-import { SessionService } from "@/services/session-service";
-import { colors, setActiveTheme, spacing } from "@/theme/tokens";
+import type { AuthAccount, FlashMessage, ThemeId, ViewMode } from '@/domain/types'
+import { DatabaseService } from '@/services/database-service'
+import { AuthService } from '@/services/auth-service'
+import { SessionService } from '@/services/session-service'
+import { UndoService } from '@/services/undo-service'
+import { colors, setActiveTheme, spacing } from '@/theme/tokens'
+import { UndoToast } from '@/components/undo-toast'
 
 type RuntimeContextValue = {
-  ready: boolean;
-  account: AuthAccount | null;
-  dataVersion: number;
-  flash: FlashMessage | null;
-  viewMode: ViewMode;
-  themeId: ThemeId;
-  refreshAuthState: () => Promise<void>;
-  bumpDataVersion: () => void;
-  setFlash: (flash: FlashMessage | null) => void;
-  setViewMode: (mode: ViewMode) => void;
-  setTheme: (themeId: ThemeId) => void;
-  resetApp: () => void;
-};
+  ready: boolean
+  account: AuthAccount | null
+  dataVersion: number
+  flash: FlashMessage | null
+  viewMode: ViewMode
+  themeId: ThemeId
+  refreshAuthState: () => Promise<void>
+  bumpDataVersion: () => void
+  setFlash: (flash: FlashMessage | null) => void
+  setViewMode: (mode: ViewMode) => void
+  setTheme: (themeId: ThemeId) => void
+  resetApp: () => void
+  scheduleUndo: (action: {
+    type: 'loss' | 'beerround'
+    sessionId: string
+    playerId: string
+    label: string
+  }) => void
+  cancelUndo: () => void
+}
 
-const RuntimeContext = createContext<RuntimeContextValue | null>(null);
+const RuntimeContext = createContext<RuntimeContextValue | null>(null)
 
 export function RuntimeProvider({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false);
-  const [account, setAccount] = useState<AuthAccount | null>(null);
-  const [dataVersion, setDataVersion] = useState(0);
-  const [flash, setFlash] = useState<FlashMessage | null>(null);
-  const [viewMode, setViewModeState] = useState<ViewMode>("basic");
-  const [themeId, setThemeIdState] = useState<ThemeId>("original");
+  const [ready, setReady] = useState(false)
+  const [account, setAccount] = useState<AuthAccount | null>(null)
+  const [dataVersion, setDataVersion] = useState(0)
+  const [flash, setFlash] = useState<FlashMessage | null>(null)
+  const [viewMode, setViewModeState] = useState<ViewMode>('basic')
+  const [themeId, setThemeIdState] = useState<ThemeId>('original')
 
   async function refreshAuthState() {
-    await DatabaseService.initialize();
-    const currentAccount = await AuthService.ensureLocalAccount();
+    await DatabaseService.initialize()
+    const currentAccount = await AuthService.ensureLocalAccount()
 
-    setAccount(currentAccount);
+    setAccount(currentAccount)
 
     try {
-      const settings = SessionService.getSettings();
-      setViewModeState(settings.viewMode);
-      setActiveTheme(settings.themeId);
-      setThemeIdState(settings.themeId as ThemeId);
+      const settings = SessionService.getSettings()
+      setViewModeState(settings.viewMode)
+      setActiveTheme(settings.themeId)
+      setThemeIdState(settings.themeId as ThemeId)
     } catch {
       // settings not yet available during initial setup
     }
 
-    setReady(true);
+    setReady(true)
   }
 
   useEffect(() => {
-    void refreshAuthState();
-  }, []);
+    void refreshAuthState()
+  }, [])
 
   const value: RuntimeContextValue = {
     ready,
@@ -63,7 +72,7 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
     themeId,
     refreshAuthState,
     bumpDataVersion() {
-      setDataVersion((value) => value + 1);
+      setDataVersion((value) => value + 1)
     },
     setFlash,
     setViewMode(mode: ViewMode) {
@@ -71,50 +80,58 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
         SessionService.updateViewMode({
           actor: { accountId: account.id, username: account.username },
           viewMode: mode,
-        });
+        })
       }
-      setViewModeState(mode);
+      setViewModeState(mode)
     },
     setTheme(id: ThemeId) {
       if (account) {
         SessionService.updateTheme({
           actor: { accountId: account.id, username: account.username },
           themeId: id,
-        });
+        })
       }
-      setActiveTheme(id);
-      setThemeIdState(id);
-      setDataVersion((v) => v + 1);
+      setActiveTheme(id)
+      setThemeIdState(id)
+      setDataVersion((v) => v + 1)
     },
     resetApp() {
       Alert.alert(
-        "App zurücksetzen",
-        "Alle Daten (Spieler, Abende, Buchungen, Einstellungen) werden unwiderruflich gelöscht. Die App startet danach neu. Fortfahren?",
+        'App zurücksetzen',
+        'Alle Daten (Spieler, Abende, Buchungen, Einstellungen) werden unwiderruflich gelöscht. Die App startet danach neu. Fortfahren?',
         [
-          { text: "Abbrechen", style: "cancel" },
+          { text: 'Abbrechen', style: 'cancel' },
           {
-            text: "Alles löschen",
-            style: "destructive",
+            text: 'Alles löschen',
+            style: 'destructive',
             async onPress() {
               try {
-                await AuthService.logout();
-                await DatabaseService.reset();
-                setActiveTheme("original");
-                setFlash(null);
-                await refreshAuthState();
-                setFlash({ type: "success", message: "App wurde zurückgesetzt." });
+                await AuthService.logout()
+                await DatabaseService.reset()
+                setActiveTheme('original')
+                setFlash(null)
+                await refreshAuthState()
+                setFlash({ type: 'success', message: 'App wurde zurückgesetzt.' })
               } catch (caught) {
                 setFlash({
-                  type: "error",
-                  message: caught instanceof Error ? caught.message : "Reset fehlgeschlagen.",
-                });
+                  type: 'error',
+                  message: caught instanceof Error ? caught.message : 'Reset fehlgeschlagen.',
+                })
               }
             },
           },
-        ],
-      );
+        ]
+      )
     },
-  };
+    scheduleUndo(action) {
+      UndoService.scheduleUndo(action, () => {
+        setFlash(null)
+      })
+    },
+    cancelUndo() {
+      UndoService.cancelPendingUndo()
+    },
+  }
 
   if (!ready) {
     return (
@@ -122,31 +139,36 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
         <ActivityIndicator color={colors.accentStrong} size="large" />
         <Text style={styles.loadingText}>Schockboard wird gestartet…</Text>
       </SafeAreaView>
-    );
+    )
   }
 
-  return <RuntimeContext.Provider value={value}>{children}</RuntimeContext.Provider>;
+  return (
+    <RuntimeContext.Provider value={value}>
+      {children}
+      <UndoToast actor={account} onUndo={() => setDataVersion((v) => v + 1)} />
+    </RuntimeContext.Provider>
+  )
 }
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  return <>{children}</>
 }
 
 export function useRuntime() {
-  const context = useContext(RuntimeContext);
+  const context = useContext(RuntimeContext)
 
   if (!context) {
-    throw new Error("RuntimeProvider fehlt.");
+    throw new Error('RuntimeProvider fehlt.')
   }
 
-  return context;
+  return context
 }
 
 const styles = StyleSheet.create({
   loadingScreen: {
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: spacing.md,
     backgroundColor: colors.bg,
   },
@@ -154,4 +176,4 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 16,
   },
-});
+})

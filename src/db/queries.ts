@@ -1222,9 +1222,14 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
     throw new Error('Nur offene Spielabende können korrigiert werden.')
   }
 
-  const lastLoss = sqliteGet<{ id: string; amount_cents: number; note: string | null }>(
+  const lastLoss = sqliteGet<{
+    id: string
+    amount_cents: number
+    note: string | null
+    is_beer_round: number
+  }>(
     `
-      SELECT id, amount_cents, note
+      SELECT id, amount_cents, note, is_beer_round
       FROM loss_entries
       WHERE session_id = $sessionId AND player_id = $playerId
       ORDER BY created_at DESC
@@ -1239,6 +1244,8 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
   if (!lastLoss) {
     throw new Error('Kein Verlust zum Löschen vorhanden.')
   }
+
+  const lossType = lastLoss.is_beer_round ? 'Bierrunde' : 'Verlust'
 
   sqliteRun('DELETE FROM loss_entries WHERE id = $id', { $id: lastLoss.id })
 
@@ -1257,7 +1264,7 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
       $playerId: input.playerId,
       $sessionId: input.sessionId,
       $amountCents: -lastLoss.amount_cents,
-      $reason: `Korrektur: Verlust von ${playerRow?.name ?? 'Spieler'} gelöscht (−${(lastLoss.amount_cents / 100).toFixed(2).replace('.', ',')} €)`,
+      $reason: `Korrektur: ${lossType} von ${playerRow?.name ?? 'Spieler'} gelöscht (−${(lastLoss.amount_cents / 100).toFixed(2).replace('.', ',')} €)`,
       $createdByAccountId: input.actor.accountId,
       $createdAt: nowIso(),
     }
@@ -1268,11 +1275,12 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
     entityType: 'loss',
     entityId: lastLoss.id,
     sessionId: input.sessionId,
-    eventType: 'loss.deleted',
+    eventType: lastLoss.is_beer_round ? 'beerround.deleted' : 'loss.deleted',
     payload: {
       playerId: input.playerId,
       amountCents: lastLoss.amount_cents,
       note: lastLoss.note,
+      isBeerRound: Boolean(lastLoss.is_beer_round),
       correctionId,
     },
   })
@@ -1292,6 +1300,17 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
   }
 
   if (session.status === 'closed') {
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'session',
+      entityId: input.sessionId,
+      sessionId: input.sessionId,
+      eventType: 'session.close_attempted_already_closed',
+      payload: {
+        reason: 'session_already_closed',
+      },
+    })
+
     return {
       skippedAbsenceCharges: false,
       absenceChargeCount: 0,

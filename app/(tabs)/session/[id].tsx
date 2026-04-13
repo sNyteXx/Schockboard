@@ -167,6 +167,12 @@ export default function SessionDetailScreen() {
       })
       runtime.bumpDataVersion()
       setNote('')
+      runtime.scheduleUndo({
+        type: 'loss',
+        sessionId: detail.data!.session.id,
+        playerId,
+        label: 'Verlust gebucht',
+      })
     } catch (caught) {
       runtime.setFlash({
         type: 'error',
@@ -187,6 +193,12 @@ export default function SessionDetailScreen() {
         note: null,
       })
       runtime.bumpDataVersion()
+      runtime.scheduleUndo({
+        type: 'loss',
+        sessionId: detail.data!.session.id,
+        playerId: targetPlayerId,
+        label: 'Verlust gebucht',
+      })
     } catch (caught) {
       runtime.setFlash({
         type: 'error',
@@ -248,9 +260,11 @@ export default function SessionDetailScreen() {
       })
       runtime.bumpDataVersion()
       setBeerNote('')
-      runtime.setFlash({
-        type: 'success',
-        message: 'Bierrunde gebucht.',
+      runtime.scheduleUndo({
+        type: 'beerround',
+        sessionId: detail.data!.session.id,
+        playerId: beerPlayerId,
+        label: 'Bierrunde gebucht',
       })
     } catch (caught) {
       runtime.setFlash({
