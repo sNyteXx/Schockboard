@@ -149,7 +149,10 @@ export default function SessionDetailScreen() {
       presentCount: currentDetail.attendance.filter((row) => row.present).length,
       absentCoreCount: currentDetail.attendance.filter((row) => !row.present && row.isCore).length,
       players,
-      timeline: currentDetail.timeline.filter((entry) => entry.kind === 'loss' || entry.kind === 'beerround' || entry.kind === 'correction'),
+      // Storno receipts (0 €) are bookkeeping noise in the live feed.
+      timeline: currentDetail.timeline.filter(
+        (entry) => entry.kind === 'loss' || entry.kind === 'beerround' || (entry.kind === 'correction' && entry.amountCents !== 0)
+      ),
       summary: buildEveningSummary(summaryInputFromDetail(currentDetail, absenceMode)),
     }
   }, [currentDetail, absenceMode])
@@ -776,6 +779,15 @@ function FeedIcon({ kind }: { kind: HistoryEntry['kind'] }) {
   )
 }
 
+const FEED_KIND: Partial<Record<HistoryEntry['kind'], string>> = { loss: 'Verlust', beerround: 'Bierrunde', correction: 'Korrektur' }
+
+/** "Verlust · 01:31" (+ note) instead of the stored default text "Verlust geloggt". */
+function feedDetail(entry: HistoryEntry) {
+  const time = new Date(entry.createdAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+  const generic = entry.message === 'Verlust geloggt' || entry.message === 'Bierrunde'
+  return [FEED_KIND[entry.kind] ?? entry.kind, time, generic ? null : entry.message].filter(Boolean).join(' · ')
+}
+
 function LiveFeed({ timeline, limit }: { timeline: HistoryEntry[]; limit: number }) {
   return (
     <Card>
@@ -787,7 +799,7 @@ function LiveFeed({ timeline, limit }: { timeline: HistoryEntry[]; limit: number
               <ListRow
                 leading={<FeedIcon kind={entry.kind} />}
                 title={entry.playerName ?? 'System'}
-                detail={entry.message}
+                detail={feedDetail(entry)}
                 value={entry.amountCents !== null ? formatCurrency(Math.abs(entry.amountCents)) : undefined}
                 valueTone={entry.kind === 'correction' ? 'muted' : 'default'}
               />

@@ -7,7 +7,12 @@ export type ServerConfig = {
   publicOrigin: string
   /** Directory with the built web UI; null disables static serving. */
   publicDir: string | null
+  /** Full access incl. device management. */
   adminEmails: string[]
+  /** Data and override commands, but no device management. */
+  managerEmails: string[]
+  /** Finished commands (applied/rejected/cancelled) older than this are deleted. */
+  commandRetentionDays: number
   cfAccessTeamDomain: string
   cfAccessAud: string | null
   devNoAuth: boolean
@@ -42,6 +47,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, defaultPublicDi
     publicOrigin: stripOrigin(env.PUBLIC_ORIGIN ?? 'https://sh0ckb04rd.snytex.de'),
     publicDir: env.PUBLIC_DIR ? path.resolve(env.PUBLIC_DIR) : defaultPublicDir,
     adminEmails: parseList(env.ADMIN_EMAILS, 'snytex@snytex.de'),
+    managerEmails: parseList(env.MANAGER_EMAILS, ''),
+    commandRetentionDays: Math.max(1, Number(env.COMMAND_RETENTION_DAYS ?? 30) || 30),
     cfAccessTeamDomain: teamDomain,
     cfAccessAud: env.CF_ACCESS_AUD?.trim() || null,
     devNoAuth: env.DEV_NO_AUTH === '1',

@@ -2,8 +2,9 @@ import { useState } from 'react'
 
 import { formatDateTime } from '@/domain/format'
 
-import { ApiError, cancelCommand, type Player } from '../api'
+import { api, ApiError, cancelCommand, type Player, type SessionOverview } from '../api'
 import { Card, Page, StatusBadge, SyncHint } from '../components'
+import { Modal } from '../overrides'
 import { COMMAND_LABELS, describeCommand, useApi, useApp } from '../state'
 
 const FILTERS = [
@@ -17,6 +18,24 @@ const FILTERS = [
 export function CommandsPage() {
   const { commands, status, refresh, toast } = useApp()
   const players = useApi<Player[]>('/players')
+  const sessions = useApi<SessionOverview[]>('/sessions')
+  const [confirmClear, setConfirmClear] = useState(false)
+  const sessionNames = new Map((sessions.data ?? []).map((session) => [session.id, session.title]))
+  const finishedCount = commands.filter((command) => command.status !== 'pending').length
+
+  async function clearHistory() {
+    setBusy('clear')
+    try {
+      const result = await api<{ deleted: number }>('/commands', { method: 'DELETE' })
+      toast(`${result.deleted} abgeschlossene Aufträge gelöscht.`)
+      setConfirmClear(false)
+    } catch (error) {
+      toast(error instanceof ApiError ? error.message : 'Fehler.', 'error')
+    } finally {
+      await refresh()
+      setBusy(null)
+    }
+  }
   const [filter, setFilter] = useState<(typeof FILTERS)[number]['value']>('all')
   const [busy, setBusy] = useState<string | null>(null)
   const names = new Map((players.data ?? []).map((player) => [player.id, player.name]))
@@ -37,7 +56,17 @@ export function CommandsPage() {
   }
 
   return (
-    <Page eyebrow="Warteschlange" title="Aufträge" actions={<button className="btn ghost" onClick={() => void refresh()}>Aktualisieren</button>}>
+    <Page eyebrow="Warteschlange" title="Aufträge" actions={
+        <>
+          <button className="btn ghost" onClick={() => void refresh()}>
+            Aktualisieren
+          </button>
+          <button className="btn danger" disabled={finishedCount === 0} onClick={() => setConfirmClear(true)}>
+            Auftragsverlauf leeren
+          </button>
+        </>
+      }
+    >
       <SyncHint />
       <div className="segmented">
         {FILTERS.map((entry) => (
@@ -60,7 +89,7 @@ export function CommandsPage() {
                     <StatusBadge status={command.status} />
                     <span className="title">{COMMAND_LABELS[command.type]}</span>
                   </div>
-                  <div style={{ marginTop: 4 }}>{describeCommand(command, names)}</div>
+                  <div style={{ marginTop: 4 }}>{describeCommand(command, names, sessionNames)}</div>
                   <div className="sub">
                     beauftragt {formatDateTime(command.createdAt)} von {command.createdBy}
                     {command.fetchedAt && command.status === 'pending' ? ' · vom Gerät abgeholt' : ''}
@@ -84,6 +113,28 @@ export function CommandsPage() {
           })}
         </div>
       </Card>
+      <div className="muted small">Abgeschlossene Aufträge werden nach einiger Zeit automatisch gelöscht (Standard: 30 Tage).</div>
+      {confirmClear ? (
+        <Modal title="Auftragsverlauf leeren?" onClose={() => setConfirmClear(false)} tone="danger">
+          <div className="stack">
+            <div>
+              {finishedCount} abgeschlossene Aufträge (übernommen, abgelehnt, storniert) werden vom Server gelöscht. Ausstehende Aufträge bleiben
+              erhalten.
+            </div>
+            <div className="banner error small">
+              Danach lässt sich im Web nicht mehr nachvollziehen oder rückgängig machen, was beauftragt wurde.
+            </div>
+            <div className="row" style={{ justifyContent: 'flex-end' }}>
+              <button type="button" className="btn ghost" onClick={() => setConfirmClear(false)}>
+                Abbrechen
+              </button>
+              <button type="button" className="btn danger solid" disabled={busy === 'clear'} onClick={() => void clearHistory()}>
+                Verlauf leeren
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </Page>
   )
 }

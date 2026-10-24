@@ -4,8 +4,11 @@ import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose'
 import type { ServerConfig } from './config'
 import type { DeviceRow, Store } from './store'
 
+export type Role = 'admin' | 'manager'
+
 export type AppVariables = {
   adminEmail: string
+  role: Role
   device: DeviceRow
 }
 
@@ -17,11 +20,13 @@ export const CF_ACCESS_HEADER = 'cf-access-jwt-assertion'
 export function createAdminAuth(config: ServerConfig, jwks?: JWTVerifyGetKey): MiddlewareHandler<AppEnv> {
   const issuer = `https://${config.cfAccessTeamDomain}`
   const keySet = jwks ?? createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`))
-  const allowed = new Set(config.adminEmails.map((email) => email.toLowerCase()))
+  const admins = new Set(config.adminEmails.map((email) => email.toLowerCase()))
+  const managers = new Set(config.managerEmails.map((email) => email.toLowerCase()))
 
   return async (c, next) => {
     if (config.devNoAuth) {
       c.set('adminEmail', 'dev@localhost')
+      c.set('role', 'admin')
       return next()
     }
 
@@ -42,13 +47,25 @@ export function createAdminAuth(config: ServerConfig, jwks?: JWTVerifyGetKey): M
       return c.json({ error: 'unauthorized', message: 'Ungültiges Cloudflare-Access-Token.' }, 401)
     }
 
-    if (typeof email !== 'string' || !allowed.has(email.toLowerCase())) {
+    const normalized = typeof email === 'string' ? email.toLowerCase() : ''
+    // Admin wins if an address is on both lists.
+    const role: Role | null = admins.has(normalized) ? 'admin' : managers.has(normalized) ? 'manager' : null
+    if (!role) {
       return c.json({ error: 'forbidden', message: 'Dieses Konto ist nicht freigeschaltet.' }, 403)
     }
 
-    c.set('adminEmail', email.toLowerCase())
+    c.set('adminEmail', normalized)
+    c.set('role', role)
     return next()
   }
+}
+
+/** Guards admin-only routes (device management, server settings). */
+export const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (c.get('role') !== 'admin') {
+    return c.json({ error: 'forbidden', message: 'Nur für Administratoren.' }, 403)
+  }
+  return next()
 }
 
 /** Bearer token of the paired device; every authenticated request refreshes lastSeenAt. */

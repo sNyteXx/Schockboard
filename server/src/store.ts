@@ -284,6 +284,23 @@ export function openStore(file: string, now: () => string = () => new Date().toI
       })
     },
 
+    /** Deletes all finished (non-pending) commands; pending ones stay queued. */
+    deleteFinishedCommands() {
+      return Number(db.prepare("DELETE FROM commands WHERE status != 'pending'").run().changes)
+    },
+
+    /** Retention: removes finished commands whose last change is older than `days`. */
+    purgeFinishedCommands(days: number) {
+      const cutoff = new Date(Date.parse(now()) - days * 86_400_000).toISOString()
+      return Number(
+        db
+          .prepare(
+            "DELETE FROM commands WHERE status != 'pending' AND COALESCE(result_received_at, cancelled_at, applied_at, created_at) < ?"
+          )
+          .run(cutoff).changes
+      )
+    },
+
     /** Cancels a pending command. Returns false if it does not exist or is no longer pending. */
     cancelCommand(id: string) {
       const result = db

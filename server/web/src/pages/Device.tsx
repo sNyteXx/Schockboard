@@ -7,7 +7,7 @@ import { Card, Page, SyncStatus } from '../components'
 import { useApp } from '../state'
 
 export function DevicePage() {
-  const { status, refresh, toast } = useApp()
+  const { status, refresh, toast, isAdmin } = useApp()
   const [busy, setBusy] = useState(false)
 
   async function run(path: string, method: 'POST' | 'DELETE', success: string) {
@@ -48,7 +48,7 @@ export function DevicePage() {
               {' · '}
               {status?.pendingCommands ?? 0} ausstehende Aufträge
             </div>
-            {status?.paired ? (
+            {status?.paired && isAdmin ? (
               <div>
                 <button className="btn ghost" onClick={revoke} disabled={busy}>
                   Gerät trennen
@@ -70,7 +70,8 @@ export function DevicePage() {
             ) : openUntil ? (
               <div className="banner warn small">Anmeldung offen bis {formatDateTime(openUntil)}. Jetzt die App auf dem neuen Gerät öffnen.</div>
             ) : null}
-            <div className="row">
+            {!isAdmin ? <div className="banner small">Gerät zulassen oder trennen dürfen nur Administratoren.</div> : null}
+            <div className="row" hidden={!isAdmin}>
               {openUntil && !firstDevice ? (
                 <button className="btn ghost" onClick={() => run('/device/enrollment', 'DELETE', 'Anmeldung geschlossen.')} disabled={busy}>
                   Anmeldung schließen

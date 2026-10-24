@@ -15,7 +15,7 @@ import {
 import type { HistoryEntry } from '@/domain/types'
 import { COMMAND_TYPES, parseCommandPayload, type CommandType } from '@/remote/protocol'
 
-import type { AppEnv } from '../auth'
+import { requireAdmin, type AppEnv } from '../auth'
 import type { ServerConfig } from '../config'
 import { hasActiveDatabase, sqliteGet } from '../snapshot-client'
 import type { Store } from '../store'
@@ -151,6 +151,25 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
       if (payload.title === undefined && payload.stakeCents === undefined) throw new CommandCheckError('Keine Änderung angegeben.')
       return
     }
+    case 'audit.delete': {
+      const auditIds = [...new Set(payload.auditIds as string[])]
+      const params = Object.fromEntries(auditIds.map((auditId, index) => [`$a${index}`, auditId]))
+      const found = sqliteGet<{ n: number }>(
+        `SELECT COUNT(*) AS n FROM audit_events WHERE id IN (${auditIds.map((_, index) => `$a${index}`).join(', ')})`,
+        params
+      )
+      if ((found?.n ?? 0) !== auditIds.length) {
+        throw new CommandCheckError('Mindestens ein Protokolleintrag existiert nicht (mehr) im letzten Datenstand.')
+      }
+      return
+    }
+    case 'audit.purge': {
+      const count = typeof payload.before === 'string'
+        ? sqliteGet<{ n: number }>('SELECT COUNT(*) AS n FROM audit_events WHERE created_at < $before', { $before: payload.before })
+        : sqliteGet<{ n: number }>('SELECT COUNT(*) AS n FROM audit_events')
+      if (!count?.n) throw new CommandCheckError('Keine passenden Protokolleinträge im letzten Datenstand.')
+      return
+    }
     case 'session.delete': {
       if (!sessionRow(String(payload.sessionId))) throw new CommandCheckError('Spielabend existiert nicht (im letzten Datenstand).')
       const duplicate = store
@@ -202,7 +221,10 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
     c.header('Cache-Control', 'no-store')
   })
 
-  app.get('/me', (c) => c.json({ email: c.get('adminEmail'), devNoAuth: config.devNoAuth }))
+  app.get('/me', (c) => c.json({ email: c.get('adminEmail'), role: c.get('role'), devNoAuth: config.devNoAuth }))
+
+  // Device management is admin-only; managers handle data and overrides.
+  app.use('/device/*', requireAdmin)
 
   app.get('/status', (c) => {
     const device = store.getActiveDevice()
@@ -341,6 +363,9 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
     const command = store.createCommand({ type: request.data.type, payload, createdBy: c.get('adminEmail') })
     return c.json(command, 201)
   })
+
+  /** Clears the command history: every finished command is deleted, pending ones stay. */
+  app.delete('/commands', (c) => c.json({ ok: true as const, deleted: store.deleteFinishedCommands() }))
 
   app.delete('/commands/:id', (c) => {
     const id = c.req.param('id')

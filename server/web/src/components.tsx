@@ -98,8 +98,8 @@ export function SyncHint() {
     <div className="banner info">
       <span aria-hidden>⟳</span>
       <div className="small">
-        Änderungen werden beim nächsten Hintergrund-Sync vom Gerät übernommen. Die angezeigten Zahlen stammen immer aus dem
-        letzten hochgeladenen Stand des Geräts.
+        Aufträge übernimmt das Gerät still beim nächsten Hintergrund-Sync (meist innerhalb von 1–15 Min.) – ohne Eintrag im
+        Protokoll der App. Die angezeigten Zahlen stammen immer aus dem letzten hochgeladenen Stand des Geräts.
       </div>
     </div>
   )

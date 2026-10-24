@@ -168,3 +168,10 @@ describe('chart SQL', () => {
     expect(getSeasonLossSeries('1999', label).series).toEqual([])
   })
 })
+
+describe('chart labels', () => {
+  it('numbers evenings that share a date', async () => {
+    const { disambiguateLabels } = await import('@/db/chart-queries')
+    expect(disambiguateLabels(['15.03.', '15.03.', '15.03.', '22.03.'])).toEqual(['15.03.', '15.03. #2', '15.03. #3', '22.03.'])
+  })
+})

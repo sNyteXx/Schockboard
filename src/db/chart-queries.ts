@@ -212,7 +212,7 @@ export function buildDashboardCharts(
     recentLossCents: recent.reduce((sum, evening) => sum + evening.lossCents, 0),
     recentEveningCount: recent.length,
     trend: {
-      labels: trendRows.map((evening) => labelOf(evening.startedAt)),
+      labels: disambiguateLabels(trendRows.map((evening) => labelOf(evening.startedAt))),
       lossCents: trendRows.map((evening) => evening.lossCents),
       absenceCents: trendRows.map((evening) => evening.absenceCents),
     },
@@ -282,7 +282,20 @@ export function getSeasonLossSeries(season: string | null, labelOf: (iso: string
   ).filter((session) => season === null || session.started_at.slice(0, 4) === season)
   const players = sqliteAll<{ id: string; name: string }>('SELECT id, name FROM players ORDER BY name ASC')
   return {
-    labels: sessions.map((session) => labelOf(session.started_at)),
+    labels: disambiguateLabels(sessions.map((session) => labelOf(session.started_at))),
     series: buildCumulativeLossSeries(sessions.map((session) => session.id), getClosedSessionLossRows(), players, limit),
   }
+}
+
+/** Several evenings on one day would all read "15.03." – number them "15.03. #2". */
+export function disambiguateLabels(labels: string[]) {
+  const totals = new Map<string, number>()
+  for (const label of labels) totals.set(label, (totals.get(label) ?? 0) + 1)
+  const seen = new Map<string, number>()
+  return labels.map((label) => {
+    if ((totals.get(label) ?? 0) < 2) return label
+    const index = (seen.get(label) ?? 0) + 1
+    seen.set(label, index)
+    return index === 1 ? label : `${label} #${index}`
+  })
 }

@@ -57,7 +57,7 @@ function Route({ path }: { path: string }) {
 
 export function App() {
   const path = usePath()
-  const { pending, email, devNoAuth } = useApp()
+  const { pending, email, role, devNoAuth } = useApp()
 
   const links = (className?: string) =>
     NAV.map((item) => (
@@ -80,6 +80,11 @@ export function App() {
         <nav className="nav">{links()}</nav>
         <div className="sidebar-foot">
           {devNoAuth ? <div className="badge danger" style={{ marginBottom: 8 }}>DEV – ohne Anmeldung</div> : null}
+          {role ? (
+            <div className={`badge ${role === 'admin' ? 'yellow' : 'info'}`} style={{ marginBottom: 8 }}>
+              {role === 'admin' ? 'Administrator' : 'Verwalter'}
+            </div>
+          ) : null}
           {email ? <div>Angemeldet als {email}</div> : null}
         </div>
       </aside>
@@ -90,6 +95,7 @@ export function App() {
           </div>
           <div className="brand-title">Schockboard</div>
           {devNoAuth ? <span className="badge danger">DEV</span> : null}
+          {role ? <span className={`badge ${role === 'admin' ? 'yellow' : 'info'}`}>{role === 'admin' ? 'Admin' : 'Verwalter'}</span> : null}
         </header>
         <nav className="mobile-nav">{links()}</nav>
         <main className="main">

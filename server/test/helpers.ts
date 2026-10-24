@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { afterAll } from 'vitest'
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWK } from 'jose'
 
 import { createApp } from '../src/app'
@@ -67,7 +68,15 @@ export async function createTestServer(overrides: Partial<ServerConfig> = {}) {
   return { app, config, store, snapshots, keys, admin, device, pair, cleanup, dataDir, logs }
 }
 
+const fixtureDirs: string[] = []
+// Registered on the importing test file's root suite.
+afterAll(() => {
+  for (const dir of fixtureDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
+})
+
+/** Temp file in its own directory; removed after the test file. */
 export function tempFile(name: string) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-fixture-'))
+  fixtureDirs.push(dir)
   return path.join(dir, name)
 }

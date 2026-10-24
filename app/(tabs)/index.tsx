@@ -156,7 +156,8 @@ export default function DashboardScreen() {
         </Card>
       ) : null}
 
-      <Grid columns={{ compact: 1, medium: 3, expanded: 3 }} gap={isTablet ? spacing.md : spacing.sm}>
+      {isTablet ? (
+        <Grid columns={{ compact: 1, medium: 3, expanded: 3 }} gap={spacing.md}>
         <KpiTile
           tone="hero"
           icon="wallet"
@@ -185,7 +186,42 @@ export default function DashboardScreen() {
           sparkColor={colors.muted}
           hint={charts.recentEveningCount ? `Aus ${charts.recentEveningCount} abgeschlossenen ${charts.recentEveningCount === 1 ? "Abend" : "Abenden"}` : "Noch kein Abend abgeschlossen"}
         />
-      </Grid>
+        </Grid>
+      ) : (
+        // Phone: hero Kasse full width, the other two side by side.
+        <Stack gap={spacing.sm}>
+        <KpiTile
+          tone="hero"
+          icon="wallet"
+          label={snapshot.settings.cashboxLabel || "Kasse"}
+          value={snapshot.cashbox.totalPaymentsCents}
+          format={formatCurrency}
+          sparkline={charts.cashSeries}
+          hint="Alle erfassten Zahlungen"
+        />
+          <Row gap={spacing.sm}>
+        <KpiTile
+          icon="alert-circle-outline"
+          label="Offene Schulden"
+          value={snapshot.cashbox.totalOutstandingCents}
+          format={formatCurrency}
+          sparkline={charts.debtSeries}
+          sparkColor={colors.danger}
+          valueTone={snapshot.cashbox.totalOutstandingCents > 0 ? "default" : "success"}
+          hint="Noch nicht eingezahlt"
+        />
+        <KpiTile
+          icon="trending-down-outline"
+          label="Verluste · letzte 5 Abende"
+          value={charts.recentLossCents}
+          format={formatCurrency}
+          sparkline={charts.recentLossSeries}
+          sparkColor={colors.muted}
+          hint={charts.recentEveningCount ? `Aus ${charts.recentEveningCount} abgeschlossenen ${charts.recentEveningCount === 1 ? "Abend" : "Abenden"}` : "Noch kein Abend abgeschlossen"}
+        />
+          </Row>
+        </Stack>
+      )}
 
       <Split weights={[7, 5]}>
         <Card>

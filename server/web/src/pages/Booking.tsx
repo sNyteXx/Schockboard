@@ -3,8 +3,11 @@ import { useState, type FormEvent } from 'react'
 import { formatCurrency, formatSignedCurrency } from '@/domain/format'
 import { parseEuroToCents, parseSignedEuroToCents } from '@/domain/utils'
 
-import { ApiError, queueCommand, type PlayerDebtSummary, type SessionOverview } from '../api'
-import { Card, ErrorView, Page, SyncHint } from '../components'
+import { ApiError, queueCommand, type CashboxChart, type PlayerDebtSummary, type SessionOverview } from '../api'
+import { LineChart } from '../charts/LineChart'
+import { ACCENT } from '../charts/scale'
+import { cashboxSeries } from '../charts/series'
+import { Card, ErrorView, Money, Page, SyncHint } from '../components'
 import { useApi, useApp } from '../state'
 
 function PlayerSelect(props: { players: PlayerDebtSummary[]; value: string; onChange: (value: string) => void }) {
@@ -28,6 +31,7 @@ export function BookingPage() {
   const { refresh, toast } = useApp()
   const debts = useApi<PlayerDebtSummary[]>('/debts')
   const sessions = useApi<SessionOverview[]>('/sessions')
+  const cashbox = useApi<CashboxChart>('/charts/cashbox')
   const players = [...(debts.data ?? [])].sort((a, b) => a.playerName.localeCompare(b.playerName, 'de'))
 
   const [payment, setPayment] = useState({ playerId: '', amount: '', note: '' })
@@ -68,6 +72,30 @@ export function BookingPage() {
     <Page eyebrow="Kasse & Ausgleich" title="Buchen">
       <SyncHint />
       {debts.error ? <ErrorView error={debts.error} /> : null}
+      {cashbox.data ? (
+        <Card title="Kasse über die Zeit">
+          <div className="row" style={{ gap: 24, marginBottom: 12 }}>
+            <div>
+              <div className="stat-label muted">Eingezahlt</div>
+              <div className="stat-value" style={{ fontSize: 28 }}>
+                <Money cents={cashbox.data.totalPaymentsCents} />
+              </div>
+            </div>
+            <div>
+              <div className="stat-label muted">Noch offen</div>
+              <div className="stat-value" style={{ fontSize: 28, color: 'var(--accent)' }}>
+                <Money cents={cashbox.data.openDebtCents} />
+              </div>
+            </div>
+          </div>
+          <LineChart
+            ariaLabel="Einzahlungen in die Kasse, kumuliert"
+            height={220}
+            series={[cashboxSeries(cashbox.data, ACCENT)]}
+            emptyText="Noch keine Zahlungen."
+          />
+        </Card>
+      ) : null}
       <div className="grid cols-2" style={{ alignItems: 'start' }}>
         <Card title="Zahlung">
           <form className="stack" onSubmit={(event) => submit('payment', event)}>

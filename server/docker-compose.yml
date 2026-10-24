@@ -16,6 +16,10 @@ services:
       TZ: Europe/Berlin
       PUBLIC_ORIGIN: https://sh0ckb04rd.snytex.de
       ADMIN_EMAILS: snytex@snytex.de
+      # Managers: data/override commands, no device management (comma-separated; also allow them in Access).
+      MANAGER_EMAILS: ""
+      # Finished commands older than this many days are deleted (startup + daily).
+      COMMAND_RETENTION_DAYS: "30"
       CF_ACCESS_TEAM_DOMAIN: snytex.cloudflareaccess.com
       # AUD tag of the Access application DockFlare created for the admin UI.
       CF_ACCESS_AUD: d44b417d5e1f8fab69e7d0499a9b3e645d48f413e8d44f70271e70d955644639

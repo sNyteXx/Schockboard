@@ -4,6 +4,13 @@ Admin-Server und Web-Oberfläche unter **https://sh0ckb04rd.snytex.de**. Das Ger
 Datenquelle: der Server zeigt nur den zuletzt hochgeladenen Stand an und sammelt Aufträge, die das Gerät später im
 Hintergrund selbst ausführt. Der Server ändert nie Spieldaten.
 
+Alle Aufträge aus dem Web sind **still**: das Gerät übernimmt sie beim nächsten Hintergrund-Sync (meist innerhalb von
+1–15 Minuten) ohne Eintrag im Protokoll der App und ohne Beleg. Dazu gehört die „Übermacht“: Buchungen bearbeiten oder
+löschen (`entry.update`/`entry.delete`, auch an beendeten Abenden), Abende bearbeiten/löschen (`session.update`/
+`session.delete`), Spieler umbenennen (`player.rename`) und Einträge des App-Protokolls entfernen (`audit.delete`,
+`audit.purge`). Ausstehende Aufträge zeigt die Web-UI nur als Hinweis „ausstehend“ an – die Zahlen stammen immer aus dem
+letzten Stand des Geräts.
+
 ## Architektur
 
 ```
@@ -28,6 +35,35 @@ App (SQLite, Wahrheit) ──PUT /api/device/snapshot──▶ snapshot.sqlite �
   JWKS des Teams geprüft (Issuer, optional Audience), danach muss `email` in `ADMIN_EMAILS` stehen.
 - Ohne Anmeldung erreichbar: nur `/healthz`.
 
+### Rollen
+
+| Rolle | Wer | Darf |
+| --- | --- | --- |
+| **Administrator** | `ADMIN_EMAILS` | alles, inkl. Geräteverwaltung (Neues Gerät zulassen, Gerät trennen) |
+| **Verwalter** | `MANAGER_EMAILS` | alles sehen, alle Daten-, Übermacht- und Protokoll-Aufträge anlegen und stornieren, Auftragsverlauf leeren – aber keine Geräteverwaltung (`/api/admin/device/*` → 403) |
+
+Steht eine Adresse in beiden Listen, gilt Administrator. `GET /api/admin/me` liefert `{ email, role }`; die Web-UI blendet
+Admin-Aktionen für Verwalter aus und zeigt die Rolle in der Seitenleiste. Beide Rollen müssen zusätzlich in der
+Cloudflare-Access-Policy freigegeben sein.
+
+## Auftragsverlauf
+
+- `DELETE /api/admin/commands` löscht alle abgeschlossenen Aufträge (übernommen, abgelehnt, storniert); ausstehende bleiben.
+  Danach ist im Web nicht mehr nachvollziehbar, was beauftragt wurde.
+- Automatisch: abgeschlossene Aufträge älter als `COMMAND_RETENTION_DAYS` werden beim Start und einmal täglich gelöscht.
+- Auftragsinhalte und E-Mail-Adressen werden nie auf stdout geloggt.
+
+## Diagramm-Endpunkte
+
+Aus dem letzten Stand per SQL berechnet (Saison-Werte zählen nur beendete Abende, Bierrunden = `loss_entries.is_beer_round = 1`):
+
+- `GET /api/admin/charts/evenings?season=YYYY|all` – je beendetem Abend: Datum, Titel, Verluste, Bierrunden, Abwesenheit, Summe, pro Spieler.
+- `GET /api/admin/charts/players` – je Spieler: Schulden-Verlauf (Abende, Zahlungen, Korrekturen; ein laufender Abend als letzter Punkt mit `open: true`), Summen, Abende dabei/verpasst.
+- `GET /api/admin/charts/cashbox` – Zahlungen kumuliert und aktuell offene Schulden.
+
+Historie, Abend-Verlauf und „Zuletzt passiert“ liefern zu jeder Buchung `entryKind` (`loss|payment|correction|absence`) und die
+Roh-Notiz `note` für die Übermacht-Aufträge.
+
 ## Umgebungsvariablen
 
 | Variable | Standard | Zweck |
@@ -35,7 +71,9 @@ App (SQLite, Wahrheit) ──PUT /api/device/snapshot──▶ snapshot.sqlite �
 | `PORT` / `HOST` | `8787` / `0.0.0.0` | Listen-Adresse |
 | `DATA_DIR` | `/data` | Datenverzeichnis |
 | `PUBLIC_ORIGIN` | `https://sh0ckb04rd.snytex.de` | Öffentliche Server-Adresse |
-| `ADMIN_EMAILS` | `snytex@snytex.de` | Erlaubte Access-E-Mails (kommagetrennt) |
+| `ADMIN_EMAILS` | `snytex@snytex.de` | Administratoren (Access-E-Mails, kommagetrennt) |
+| `MANAGER_EMAILS` | – | Verwalter ohne Geräteverwaltung (kommagetrennt) |
+| `COMMAND_RETENTION_DAYS` | `30` | Abgeschlossene Aufträge werden nach so vielen Tagen gelöscht |
 | `CF_ACCESS_TEAM_DOMAIN` | `snytex.cloudflareaccess.com` | Access-Team (Issuer + JWKS) |
 | `CF_ACCESS_AUD` | – | Audience-Tag der Access-App; wird nur geprüft, wenn gesetzt (empfohlen) |
 | `DEV_NO_AUTH` | – | `1` schaltet die Admin-Anmeldung ab – **nur lokal!** |

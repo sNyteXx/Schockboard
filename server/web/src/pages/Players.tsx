@@ -1,8 +1,105 @@
 import { useState, type FormEvent } from 'react'
 
-import { queueCommand, ApiError, type Player, type PlayerDebtSummary } from '../api'
+import { formatDate, formatSignedCurrency } from '@/domain/format'
+
+import { queueCommand, ApiError, type Player, type PlayerChartRow, type PlayerDebtSummary } from '../api'
+import { LineChart } from '../charts/LineChart'
+import { ACCENT } from '../charts/scale'
 import { Card, ErrorView, Loading, Money, Page, PendingHints, SyncHint } from '../components'
-import { pendingForPlayer, useApi, useApp } from '../state'
+import { Drawer, RenameDialog, RenamePendingBadges } from '../overrides'
+import { Link, pendingForPlayer, useApi, useApp } from '../state'
+
+const EVENT_LABELS = { evening: 'Abend', payment: 'Zahlung', correction: 'Korrektur' } as const
+
+function PlayerDrawer({ playerId, onClose, onRename }: { playerId: string; onClose: () => void; onRename: () => void }) {
+  const { pending } = useApp()
+  const chart = useApi<PlayerChartRow[]>('/charts/players')
+  const row = chart.data?.find((entry) => entry.playerId === playerId)
+  const totals = row?.totals
+  return (
+    <Drawer title={row?.playerName ?? 'Spieler'} onClose={onClose}>
+      {chart.error ? <ErrorView error={chart.error} /> : null}
+      {!row && chart.loading ? <div className="skeleton" /> : null}
+      {row && totals ? (
+        <div className="stack" style={{ gap: 18 }}>
+          <div className="row" style={{ gap: 6 }}>
+            {row.isCore ? <span className="badge yellow">Stamm</span> : <span className="badge">Gast</span>}
+            {row.isArchived ? <span className="badge">Archiviert</span> : null}
+            <button type="button" className="btn ghost small" onClick={onRename}>
+              Umbenennen
+            </button>
+          </div>
+          <RenamePendingBadges playerId={playerId} />
+          <PendingHints commands={pendingForPlayer(pending, playerId).filter((command) => command.type !== 'player.rename')} />
+          <div className="drawer-kpi">
+            <div className="stat-label muted">Offen</div>
+            <div className="stat-value" style={{ color: totals.openDebtCents > 0 ? 'var(--accent)' : 'var(--success)' }}>
+              <Money cents={totals.openDebtCents} />
+            </div>
+            <div className="muted small">
+              {row.eveningsAttended} Abende dabei · {row.eveningsMissed} verpasst (beendete Abende)
+            </div>
+          </div>
+          <LineChart
+            ariaLabel={`Offene Schulden von ${row.playerName} im Zeitverlauf`}
+            height={220}
+            series={[
+              {
+                id: row.playerId,
+                label: row.playerName,
+                color: ACCENT,
+                points: row.timeline.map((point) => ({ t: new Date(point.at).getTime(), v: point.debtCents, note: `${EVENT_LABELS[point.kind]}: ${point.label}` })),
+              },
+            ]}
+            emptyText="Noch keine Buchungen."
+          />
+          <dl className="totals">
+            <dt>Verluste</dt>
+            <dd><Money cents={totals.lossCents} /></dd>
+            <dt>Bierrunden</dt>
+            <dd><Money cents={totals.beerCents} /></dd>
+            <dt>Abwesenheit</dt>
+            <dd><Money cents={totals.absenceCents} /></dd>
+            <dt>Korrekturen</dt>
+            <dd><Money cents={totals.correctionCents} /></dd>
+            <dt>Gezahlt</dt>
+            <dd><Money cents={totals.paymentCents} /></dd>
+            <dt className="strong">Offen</dt>
+            <dd className="strong"><Money cents={totals.openDebtCents} debt /></dd>
+          </dl>
+          {row.timeline.length > 0 ? (
+            <div>
+              <h3>Letzte Veränderungen</h3>
+              <div className="list">
+                {[...row.timeline].reverse().slice(0, 12).map((point, index) => (
+                  <div key={`${point.at}-${index}`} className="list-item">
+                    <div style={{ minWidth: 0 }}>
+                      <div className="title">
+                        {EVENT_LABELS[point.kind]}
+                        {point.open ? <span className="badge yellow" style={{ marginLeft: 6 }}>läuft</span> : null}
+                      </div>
+                      <div className="sub">
+                        {formatDate(point.at)} ·{' '}
+                        {point.sessionId && point.kind === 'evening' ? <Link to={`/abende/${encodeURIComponent(point.sessionId)}`}>{point.label}</Link> : point.label}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div className="amount">{formatSignedCurrency(point.deltaCents)}</div>
+                      <div className="sub">→ <Money cents={point.debtCents} /></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <Link to={`/historie`} className="small">
+            Alle Buchungen in der Historie
+          </Link>
+        </div>
+      ) : null}
+    </Drawer>
+  )
+}
 
 export function PlayersPage() {
   const { pending, refresh, toast } = useApp()
@@ -12,6 +109,13 @@ export function PlayersPage() {
   const [isCore, setIsCore] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [openPlayer, setOpenPlayerState] = useState<string | null>(() => new URLSearchParams(window.location.search).get('spieler'))
+  const [renaming, setRenaming] = useState<Player | null>(null)
+
+  function setOpenPlayer(id: string | null) {
+    setOpenPlayerState(id)
+    window.history.replaceState(null, '', id ? `/spieler?spieler=${encodeURIComponent(id)}` : '/spieler')
+  }
 
   const debtById = new Map((debts.data ?? []).map((row) => [row.playerId, row]))
   const pendingCreates = pending.filter((command) => command.type === 'player.create')
@@ -82,7 +186,7 @@ export function PlayersPage() {
             </div>
             <div>
               <span className="badge pending">ausstehend</span> Beauftragt, aber noch nicht vom Gerät übernommen – die Beträge
-              enthalten das noch nicht.
+              enthalten das noch nicht. Umbenennen geschieht still, ohne Eintrag im Protokoll der App.
             </div>
           </div>
         </Card>
@@ -123,12 +227,15 @@ export function PlayersPage() {
                   return (
                     <tr key={player.id}>
                       <td>
-                        <div style={{ fontWeight: 800 }}>{player.name}</div>
+                        <button type="button" className="name-btn" onClick={() => setOpenPlayer(player.id)}>
+                          {player.name}
+                        </button>
                         <div className="row" style={{ gap: 6, marginTop: 4 }}>
                           {player.isCore ? <span className="badge yellow">Stamm</span> : <span className="badge">Gast</span>}
                           {player.isArchived ? <span className="badge">Archiviert</span> : null}
                         </div>
-                        <PendingHints commands={playerPending} />
+                        <PendingHints commands={playerPending.filter((command) => command.type !== 'player.rename')} />
+                        <RenamePendingBadges playerId={player.id} />
                       </td>
                       <td className="num hide-mobile">{debt ? <Money cents={debt.lossCents} /> : '—'}</td>
                       <td className="num hide-mobile">{debt ? <Money cents={debt.absenceCents} /> : '—'}</td>
@@ -137,6 +244,9 @@ export function PlayersPage() {
                       <td className="num">{debt ? <Money cents={debt.openDebtCents} debt /> : '—'}</td>
                       <td>
                         <div className="row" style={{ gap: 6 }}>
+                          <button className="btn ghost small" onClick={() => setRenaming(player)}>
+                            Umbenennen
+                          </button>
                           <button
                             className="btn ghost small"
                             disabled={busy === player.id || updatePending}
@@ -161,6 +271,17 @@ export function PlayersPage() {
           </div>
         </Card>
       ) : null}
+      {openPlayer ? (
+        <PlayerDrawer
+          playerId={openPlayer}
+          onClose={() => setOpenPlayer(null)}
+          onRename={() => {
+            const player = (players.data ?? []).find((entry) => entry.id === openPlayer)
+            if (player) setRenaming(player)
+          }}
+        />
+      ) : null}
+      {renaming ? <RenameDialog player={renaming} onClose={() => setRenaming(null)} /> : null}
     </Page>
   )
 }

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
-import { formatCurrency, formatSignedCurrency } from '@/domain/format'
+import { formatCurrency, formatDateTime, formatSignedCurrency } from '@/domain/format'
 
 import { api, ApiError, type EntryKind, type StoredCommand, type ServerStatus } from './api'
 
@@ -54,6 +54,9 @@ type AppState = {
   commands: StoredCommand[]
   pending: StoredCommand[]
   email: string | null
+  /** 'manager' may queue every data/override/log command but not manage the device. */
+  role: 'admin' | 'manager' | null
+  isAdmin: boolean
   devNoAuth: boolean
   /** Changes whenever a new snapshot or command update arrives; data hooks refetch on change. */
   revision: number
@@ -72,7 +75,7 @@ export function useApp() {
 export function AppProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<ServerStatus | null>(null)
   const [commands, setCommands] = useState<StoredCommand[]>([])
-  const [me, setMe] = useState<{ email: string; devNoAuth: boolean } | null>(null)
+  const [me, setMe] = useState<{ email: string; role: 'admin' | 'manager'; devNoAuth: boolean } | null>(null)
   const [revision, setRevision] = useState(0)
   const [toasts, setToasts] = useState<Toast[]>([])
   const fingerprint = useRef('')
@@ -102,7 +105,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     void refresh()
-    api<{ email: string; devNoAuth: boolean }>('/me').then(setMe, () => undefined)
+    api<{ email: string; role: 'admin' | 'manager'; devNoAuth: boolean }>('/me').then(setMe, () => undefined)
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') void refresh()
     }, 20_000)
@@ -120,6 +123,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       commands,
       pending: commands.filter((command) => command.status === 'pending'),
       email: me?.email ?? null,
+      role: me?.role ?? null,
+      isAdmin: me?.role === 'admin',
       devNoAuth: me?.devNoAuth ?? false,
       revision,
       refresh,
@@ -189,6 +194,8 @@ export const COMMAND_LABELS: Record<StoredCommand['type'], string> = {
   'player.rename': 'Spieler umbenennen',
   'session.update': 'Abend ändern',
   'session.delete': 'Abend löschen',
+  'audit.delete': 'Protokolleinträge löschen',
+  'audit.purge': 'App-Protokoll leeren',
 }
 
 export const ENTRY_KIND_LABELS: Record<EntryKind, string> = {
@@ -237,6 +244,12 @@ export function describeCommand(command: StoredCommand, names: Map<string, strin
       return `${session(payload.sessionId)}: ${describeSessionUpdate(payload)}`
     case 'session.delete':
       return `${session(payload.sessionId)} mit allen Buchungen löschen`
+    case 'audit.delete': {
+      const count = Array.isArray(payload.auditIds) ? payload.auditIds.length : 0
+      return `${count} ${count === 1 ? 'Protokolleintrag' : 'Protokolleinträge'} der App löschen`
+    }
+    case 'audit.purge':
+      return payload.before ? `App-Protokoll vor dem ${formatDateTime(String(payload.before))} leeren` : 'Gesamtes App-Protokoll leeren'
   }
 }
 
@@ -264,6 +277,8 @@ export type PendingOverrides = {
   sessionDeletes: Map<string, StoredCommand>
   sessionUpdates: Map<string, StoredCommand[]>
   renames: Map<string, StoredCommand[]>
+  auditDeletes: Map<string, StoredCommand>
+  auditPurges: StoredCommand[]
 }
 
 export const entryKey = (kind: EntryKind, id: string) => `${kind}:${id}`
@@ -275,6 +290,8 @@ export function pendingOverrides(pending: StoredCommand[]): PendingOverrides {
     sessionDeletes: new Map(),
     sessionUpdates: new Map(),
     renames: new Map(),
+    auditDeletes: new Map(),
+    auditPurges: [],
   }
   const push = (map: Map<string, StoredCommand[]>, key: string, command: StoredCommand) => map.set(key, [...(map.get(key) ?? []), command])
   for (const command of pending) {
@@ -285,8 +302,18 @@ export function pendingOverrides(pending: StoredCommand[]): PendingOverrides {
     if (command.type === 'session.delete') result.sessionDeletes.set(String(payload.sessionId), command)
     if (command.type === 'session.update') push(result.sessionUpdates, String(payload.sessionId), command)
     if (command.type === 'player.rename') push(result.renames, String(payload.playerId), command)
+    if (command.type === 'audit.delete') for (const auditId of payload.auditIds as string[]) result.auditDeletes.set(auditId, command)
+    if (command.type === 'audit.purge') result.auditPurges.push(command)
   }
   return result
+}
+
+/** Pending command that will remove this app-log entry, if any. */
+export function pendingAuditRemoval(overrides: PendingOverrides, entry: { id: string; createdAt: string }) {
+  return (
+    overrides.auditDeletes.get(entry.id) ??
+    overrides.auditPurges.find((command) => !command.payload.before || entry.createdAt < String(command.payload.before))
+  )
 }
 
 export function usePendingOverrides() {
