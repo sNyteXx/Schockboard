@@ -38,4 +38,14 @@ describe('precise undo', () => {
     expect(listener).toHaveBeenCalledTimes(3) // immediate, scheduled, expired
     unsubscribe()
   })
+
+  it('surfaces a failed undo to the caller instead of swallowing it', async () => {
+    vi.mocked(SessionService.deleteLastLoss).mockImplementation(() => {
+      throw new Error('Nur offene Spielabende können korrigiert werden.')
+    })
+    UndoService.scheduleUndo({ type: 'loss', sessionId: 'evening', playerId: 'player', entryId: 'loss_1', label: 'Verlust' }, () => {})
+
+    await expect(UndoService.executeUndo(actor)).rejects.toThrow(/offene Spielabende/)
+    expect(UndoService.getPendingUndo()).toBeNull()
+  })
 })

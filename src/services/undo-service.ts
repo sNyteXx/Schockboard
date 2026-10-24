@@ -13,6 +13,8 @@ type Actor = {
   username: string
 }
 
+export const UNDO_WINDOW_MS = 5000
+
 let pendingUndo: (UndoAction & { timeoutId: ReturnType<typeof setTimeout> }) | null = null
 const listeners = new Set<() => void>()
 
@@ -35,7 +37,7 @@ export const UndoService = {
     return pendingUndo ? { ...pendingUndo, timeoutId: undefined } : null
   },
 
-  scheduleUndo(action: UndoAction, onExpire: () => void, delayMs = 5000) {
+  scheduleUndo(action: UndoAction, onExpire: () => void, delayMs = UNDO_WINDOW_MS) {
     // Cancel any existing pending undo first
     clearPending()
 

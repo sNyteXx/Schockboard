@@ -11,6 +11,7 @@ import {
   type ViewStyle,
   View,
 } from "react-native";
+import Animated, { FadeInDown } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { colors, radius, spacing } from "@/theme/tokens";
@@ -186,7 +187,12 @@ export function Card({
   tone?: "default" | "accent";
 }) {
   const styles = useStyles();
-  return <View style={[styles.card, tone === "accent" && styles.cardAccent]}>{children}</View>;
+  // Entrance runs once on mount only; data refreshes re-render without replaying it.
+  return (
+    <Animated.View entering={FadeInDown.duration(260).springify().damping(20)} style={[styles.card, tone === "accent" && styles.cardAccent]}>
+      {children}
+    </Animated.View>
+  );
 }
 
 export function SectionTitle({

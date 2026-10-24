@@ -9,6 +9,15 @@
 - Standard-Einsatz wird bei neu angelegten Spielabenden übernommen
 - Historienfilter ohne irreführenden No-op-Button
 - CI-Installation mit Legacy-Peer-Auflösung sowie Android-Bundle-Export
+- Backup-Fix: eigene Sicherungen (WAL-Modus) werden jetzt angenommen; Restore prüft alle Tabellen/Views und Fremdschlüssel und rollt bei Fehlern sauber zurück
+- Abwesenheitsvorschau rundet identisch zur späteren Abbuchung (Modus „auf Abwesende aufgeteilt“)
+- Spielabend-Abschluss vollständig transaktional, doppelte Zuschläge ausgeschlossen
+- Migration v6 protokolliert jede neutralisierte Storno-Korrektur im Log
+- Fehlgeschlagenes Undo wird angezeigt statt verschluckt; offenes Undo wird bei Restore/Reset verworfen
+- Animationen (Reanimated): federnde Kacheln, hüpfender Zähler, Aufleuchten bei Buchung, Undo-Toast mit Countdown, Karten-Einblendung
+- Haptisches Feedback bei Buchung, Storno, Abschluss und Fehlern
+- Echte Tab-Icons (Ionicons) statt Unicode-Zeichen
+- Integrationstests gegen echtes SQLite (Abschluss, Storno, Migration v6)
 
 ## Vor Freigabe
 

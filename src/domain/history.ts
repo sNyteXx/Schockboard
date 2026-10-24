@@ -12,6 +12,7 @@ function translateAuditEvent(eventType: string) {
     'correction.recorded': 'Korrektur eingetragen',
     'loss.logged': 'Verlust eingetragen',
     'loss.deleted': 'Verlust gelöscht',
+    'migration.correction_neutralized': 'Doppelte Storno-Buchung neutralisiert (Update 2.0)',
     'payment.recorded': 'Zahlung eingetragen',
     'player.core_created': 'Stammspieler angelegt',
     'player.guest_created': 'Gast angelegt',

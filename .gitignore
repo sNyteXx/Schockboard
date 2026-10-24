@@ -42,3 +42,9 @@ yarn-error.*
 
 # coverage
 /coverage
+
+# build artifacts & device dumps (APKs go to GitHub Releases)
+*.apk
+*.aab
+release-build.log
+*_dump*.xml

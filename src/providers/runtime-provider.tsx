@@ -107,6 +107,7 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
             style: 'destructive',
             async onPress() {
               try {
+                UndoService.cancelPendingUndo()
                 await AuthService.logout()
                 await DatabaseService.reset()
                 setActiveTheme('bvb09')
@@ -146,7 +147,15 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
   return (
     <RuntimeContext.Provider value={value}>
       {children}
-      <UndoToast actor={account} themeId={themeId} onUndo={() => setDataVersion((v) => v + 1)} />
+      <UndoToast
+        actor={account}
+        themeId={themeId}
+        onUndo={() => setDataVersion((v) => v + 1)}
+        onError={(message) => {
+          setFlash({ type: 'error', message })
+          setDataVersion((v) => v + 1)
+        }}
+      />
     </RuntimeContext.Provider>
   )
 }

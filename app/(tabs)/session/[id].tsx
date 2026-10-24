@@ -22,6 +22,7 @@ import {
 import { formatCurrency, formatDateTime } from '@/domain/format'
 import { describeHistoryEntry } from '@/domain/history'
 import { cleanOptionalText, parseEuroToCents } from '@/domain/utils'
+import { Feedback } from '@/services/haptics'
 import { useAsyncResource } from '@/hooks/use-async-resource'
 import { useDeviceLayout } from '@/hooks/use-device-layout'
 import { useRuntime } from '@/providers/runtime-provider'
@@ -87,6 +88,7 @@ export default function SessionDetailScreen() {
   const actor = { accountId: runtime.account.id, username: runtime.account.username }
 
   function showError(error: unknown, fallback: string) {
+    Feedback.error()
     runtime.setFlash({ type: 'error', message: error instanceof Error ? error.message : fallback })
   }
 
@@ -103,6 +105,7 @@ export default function SessionDetailScreen() {
   function closeSession() {
     try {
       const result = SessionService.closeSession({ actor, sessionId: session.id })
+      Feedback.success()
       runtime.bumpDataVersion()
       runtime.setFlash({
         type: 'success',

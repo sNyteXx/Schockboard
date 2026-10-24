@@ -210,6 +210,8 @@ export default function SettingsScreen() {
             style: "destructive",
             async onPress() {
               try {
+                // A pending undo refers to entries of the database being replaced.
+                runtime.cancelUndo();
                 BackupService.restoreValidatedBackup(backupBytes);
                 await runtime.refreshAuthState();
                 runtime.bumpDataVersion();

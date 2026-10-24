@@ -1,4 +1,4 @@
-import type { PlayerDebtSummary } from "@/domain/types";
+import type { AbsencePenaltyMode, PlayerDebtSummary } from "@/domain/types";
 
 export function calculateAbsenceAverageCents(totalPresentCoreLossCents: number, presentCoreCount: number) {
   if (presentCoreCount <= 0) {
@@ -6,6 +6,25 @@ export function calculateAbsenceAverageCents(totalPresentCoreLossCents: number, 
   }
 
   return Math.round(totalPresentCoreLossCents / presentCoreCount);
+}
+
+/**
+ * Amount charged to each absent regular player. `split_absent` divides the
+ * already rounded average, so the open-session preview (SQL) must round in
+ * exactly the same two steps.
+ */
+export function calculateAbsenceChargeCents(input: {
+  mode: AbsencePenaltyMode;
+  totalPresentCoreLossCents: number;
+  presentCoreCount: number;
+  absentCoreCount: number;
+}) {
+  if (input.mode === "none" || input.absentCoreCount <= 0 || input.totalPresentCoreLossCents <= 0) {
+    return 0;
+  }
+
+  const averageCents = calculateAbsenceAverageCents(input.totalPresentCoreLossCents, input.presentCoreCount);
+  return input.mode === "split_absent" ? Math.round(averageCents / input.absentCoreCount) : averageCents;
 }
 
 export function calculateOpenDebtCents(input: {

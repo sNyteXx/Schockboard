@@ -229,15 +229,30 @@ const MIGRATIONS = [
       -- correction, inadvertently subtracting the amount twice. Only fix
       -- corrections identified by their matching deletion audit event;
       -- genuine manual corrections must be preserved unchanged.
-      UPDATE corrections
-      SET amount_cents = 0
-      WHERE id IN (
-        SELECT CASE WHEN json_valid(payload_json)
-          THEN json_extract(payload_json, '$.correctionId')
-          ELSE NULL END
-        FROM audit_events
-        WHERE event_type IN ('loss.deleted', 'beerround.deleted')
-      );
+      CREATE TEMP TABLE v6_voided AS
+      SELECT c.id, c.player_id, c.session_id, c.amount_cents
+      FROM corrections c
+      WHERE c.amount_cents < 0
+        AND c.id IN (
+          SELECT CASE WHEN json_valid(payload_json)
+            THEN json_extract(payload_json, '$.correctionId')
+            ELSE NULL END
+          FROM audit_events
+          WHERE event_type IN ('loss.deleted', 'beerround.deleted')
+        );
+
+      -- Leave a visible audit trail per neutralized row, so a group that had
+      -- already compensated the double deduction manually can spot and
+      -- reverse it in the log.
+      INSERT INTO audit_events (id, actor_account_id, event_type, entity_type, entity_id, session_id, payload_json, created_at)
+      SELECT 'audit_v6_' || id, NULL, 'migration.correction_neutralized', 'correction', id, session_id,
+        json_object('playerId', player_id, 'previousAmountCents', amount_cents, 'migration', 6),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM v6_voided;
+
+      UPDATE corrections SET amount_cents = 0 WHERE id IN (SELECT id FROM v6_voided);
+
+      DROP TABLE v6_voided;
     `,
   },
 ]

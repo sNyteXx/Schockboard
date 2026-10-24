@@ -1,4 +1,4 @@
-import { calculateAbsenceAverageCents, getVoidedLossCorrectionCents, sortDebtors } from '@/domain/ledger'
+import { calculateAbsenceChargeCents, getVoidedLossCorrectionCents, sortDebtors } from '@/domain/ledger'
 import { SCHOCK_RULE_PROFILE } from '@/domain/rules'
 import type {
   AbsencePenaltyMode,
@@ -449,7 +449,7 @@ export function getDebtSummaries() {
             CASE
               WHEN $absencePenaltyMode = 'none' THEN 0
               WHEN $absencePenaltyMode = 'split_absent'
-                THEN CAST(ROUND(1.0 * COALESCE(pl.total_present_core_loss_cents, 0) / pc.present_core_count / ac.absent_core_count) AS INTEGER)
+                THEN CAST(ROUND(1.0 * ROUND(1.0 * COALESCE(pl.total_present_core_loss_cents, 0) / pc.present_core_count) / ac.absent_core_count) AS INTEGER)
               ELSE CAST(ROUND(1.0 * COALESCE(pl.total_present_core_loss_cents, 0) / pc.present_core_count) AS INTEGER)
             END AS amount_cents
           FROM session_attendance sa
@@ -1292,6 +1292,16 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
 }
 
 export function closeSession(input: { actor: Actor; sessionId: string }) {
+  // Reads and writes share one transaction so a second close can never see a
+  // stale 'open' status and assess absence charges twice.
+  let result!: ReturnType<typeof closeSessionUnsafe>
+  getSqlite().withTransactionSync(() => {
+    result = closeSessionUnsafe(input)
+  })
+  return result
+}
+
+function closeSessionUnsafe(input: { actor: Actor; sessionId: string }) {
   const settings = getAppSettings()
   const session = sqliteGet<{ status: 'open' | 'closed' }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
@@ -1376,18 +1386,13 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
     totalPresentCoreLossCents = rows.reduce((sum, row) => sum + row.amount_cents, 0)
   }
 
-  // Close and assess absence penalties atomically: a crash cannot leave a
-  // partially charged, still-open evening behind.
-  getSqlite().withTransactionSync(() => {
   if (!absenceReason && absentCoreIds.length > 0 && totalPresentCoreLossCents > 0) {
-    const averageCents = calculateAbsenceAverageCents(
+    const amountCents = calculateAbsenceChargeCents({
+      mode: settings.absencePenaltyMode,
       totalPresentCoreLossCents,
-      presentCoreIds.length
-    )
-    const amountCents =
-      settings.absencePenaltyMode === 'split_absent'
-        ? Math.round(averageCents / absentCoreIds.length)
-        : averageCents
+      presentCoreCount: presentCoreIds.length,
+      absentCoreCount: absentCoreIds.length,
+    })
     const createdAt = nowIso()
     absenceChargeCount = absentCoreIds.length
     const note = getAbsenceChargeNote({
@@ -1445,7 +1450,7 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
       SET status = 'closed',
           closed_at = $closedAt,
           updated_at = $updatedAt
-      WHERE id = $sessionId
+      WHERE id = $sessionId AND status = 'open'
     `,
     {
       $sessionId: input.sessionId,
@@ -1469,7 +1474,6 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
       absenceChargesSkipped: skippedAbsenceCharges,
       skipReason: absenceReason,
     },
-  })
   })
 
   return {

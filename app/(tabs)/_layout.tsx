@@ -1,12 +1,16 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { Tabs } from "expo-router";
-import { Text } from "react-native";
 
 import { AuthGate, useRuntime } from "@/providers/runtime-provider";
 import { colors } from "@/theme/tokens";
 import { useDeviceLayout } from "@/hooks/use-device-layout";
 
-function TabIcon({ symbol, focused }: { symbol: string; focused: boolean }) {
-  return <Text style={{ fontSize: 22, fontWeight: "900", color: focused ? colors.accentStrong : colors.muted }}>{symbol}</Text>;
+type IconName = React.ComponentProps<typeof Ionicons>["name"];
+
+function TabIcon({ name, focused }: { name: IconName; focused: boolean }) {
+  // Filled glyph when active, outline otherwise – same pattern as Material 3.
+  const glyph = (focused ? name : `${name}-outline`) as IconName;
+  return <Ionicons name={glyph} size={23} color={focused ? colors.accentStrong : colors.muted} />;
 }
 
 export default function TabsLayout() {
@@ -40,11 +44,11 @@ export default function TabsLayout() {
           },
         }}
       >
-        <Tabs.Screen name="index" options={{ title: "Board", tabBarIcon: ({ focused }) => <TabIcon symbol="◈" focused={focused} /> }} />
-        <Tabs.Screen name="sessions" options={{ title: "Abende", tabBarIcon: ({ focused }) => <TabIcon symbol="⚄" focused={focused} /> }} />
-        <Tabs.Screen name="cashbox" options={{ title: "Kasse", tabBarIcon: ({ focused }) => <TabIcon symbol="€" focused={focused} /> }} />
-        <Tabs.Screen name="history" options={{ title: "Log", tabBarIcon: ({ focused }) => <TabIcon symbol="≡" focused={focused} /> }} />
-        <Tabs.Screen name="settings" options={{ title: "Setup", tabBarIcon: ({ focused }) => <TabIcon symbol="⚙" focused={focused} /> }} />
+        <Tabs.Screen name="index" options={{ title: "Board", tabBarIcon: ({ focused }) => <TabIcon name="grid" focused={focused} /> }} />
+        <Tabs.Screen name="sessions" options={{ title: "Abende", tabBarIcon: ({ focused }) => <TabIcon name="dice" focused={focused} /> }} />
+        <Tabs.Screen name="cashbox" options={{ title: "Kasse", tabBarIcon: ({ focused }) => <TabIcon name="wallet" focused={focused} /> }} />
+        <Tabs.Screen name="history" options={{ title: "Log", tabBarIcon: ({ focused }) => <TabIcon name="time" focused={focused} /> }} />
+        <Tabs.Screen name="settings" options={{ title: "Setup", tabBarIcon: ({ focused }) => <TabIcon name="settings" focused={focused} /> }} />
         <Tabs.Screen name="session/[id]" options={{ href: null, title: "Spielabend" }} />
       </Tabs>
     </AuthGate>
