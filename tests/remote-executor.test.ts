@@ -109,4 +109,18 @@ describe('remote command executor', () => {
     expect(memory.current.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM loss_entries')!.n).toBe(0)
     expect(getDebtSummaries().find((row) => row.playerId === anna)!.openDebtCents).toBe(0)
   })
+
+  it('deletes single log entries or purges the log silently', () => {
+    createPlayer({ actor, name: 'Ben', isCore: true })
+    createPlayer({ actor, name: 'Cem', isCore: true })
+    const ids = memory.current.getAllSync<{ id: string }>('SELECT id FROM audit_events ORDER BY created_at').map((row) => row.id)
+    expect(ids.length).toBeGreaterThanOrEqual(2)
+
+    applyRemoteCommands([command('a1', 'audit.delete', { auditIds: [ids[0]] })], actor)
+    expect(memory.current.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM audit_events WHERE id = $id', { $id: ids[0] })!.n).toBe(0)
+
+    applyRemoteCommands([command('a2', 'audit.purge', {})], actor)
+    expect(memory.current.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM audit_events')!.n).toBe(0)
+    expect(listPlayers()).toHaveLength(2) // data itself untouched
+  })
 })

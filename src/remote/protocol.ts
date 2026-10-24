@@ -87,6 +87,14 @@ export const commandSchemas = {
   'session.delete': z.object({
     sessionId: id,
   }),
+  /** Removes individual entries of the app's log (audit_events). */
+  'audit.delete': z.object({
+    auditIds: z.array(id).min(1).max(500),
+  }),
+  /** Empties the app's log, optionally only entries created before a date. */
+  'audit.purge': z.object({
+    before: z.string().datetime().optional(),
+  }),
 } as const
 
 export type CommandType = keyof typeof commandSchemas

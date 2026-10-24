@@ -8,7 +8,7 @@ import {
   updatePlayerFlags,
 } from '@/db/queries'
 import { nowIso } from '@/domain/utils'
-import { deleteEntry, deleteSession, renamePlayer, updateEntry, updateSession } from '@/remote/override'
+import { deleteAuditEntries, deleteEntry, deleteSession, purgeAudit, renamePlayer, updateEntry, updateSession } from '@/remote/override'
 import { parseCommandPayload, type CommandResult, type RemoteCommand } from '@/remote/protocol'
 
 type Actor = { accountId: string; username: string }
@@ -61,6 +61,12 @@ function dispatch(command: RemoteCommand, actor: Actor) {
       return
     case 'session.delete':
       deleteSession(parseCommandPayload(command.type, command.payload))
+      return
+    case 'audit.delete':
+      deleteAuditEntries(parseCommandPayload(command.type, command.payload))
+      return
+    case 'audit.purge':
+      purgeAudit(parseCommandPayload(command.type, command.payload))
       return
   }
 }

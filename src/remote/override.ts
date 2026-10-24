@@ -78,3 +78,17 @@ export function deleteSession(input: CommandPayload<'session.delete'>) {
   const result = sqliteRun('DELETE FROM sessions WHERE id = $id', { $id: input.sessionId })
   if (!result.changes) throw new Error('Spielabend nicht gefunden.')
 }
+
+export function deleteAuditEntries(input: CommandPayload<'audit.delete'>) {
+  for (const auditId of input.auditIds) {
+    sqliteRun('DELETE FROM audit_events WHERE id = $id', { $id: auditId })
+  }
+}
+
+export function purgeAudit(input: CommandPayload<'audit.purge'>) {
+  if (input.before) {
+    sqliteRun('DELETE FROM audit_events WHERE created_at < $before', { $before: input.before })
+  } else {
+    sqliteRun('DELETE FROM audit_events')
+  }
+}
