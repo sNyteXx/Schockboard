@@ -19,6 +19,7 @@ import type { AppEnv } from '../auth'
 import type { ServerConfig } from '../config'
 import { hasActiveDatabase, sqliteGet } from '../snapshot-client'
 import type { Store } from '../store'
+import { ENTRY_TABLES, entryKindOf, entryNotes, getCashboxChart, getEveningsChart, getPlayersChart, type EntryKind } from '../charts'
 
 const HISTORY_KINDS = ['all', 'loss', 'beerround', 'absence', 'payment', 'correction', 'audit'] as const
 
@@ -89,21 +90,106 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
     case 'settings.update':
       return
     case 'loss.void': {
+      // An override now: closed evenings are fine too, the device just deletes the entry.
       const session = sessionRow(String(payload.sessionId))
       if (!session) throw new CommandCheckError('Spielabend existiert nicht (im letzten Datenstand).')
-      if (session.status !== 'open') throw new CommandCheckError('Nur Einträge offener Spielabende können storniert werden.')
       const entry = sqliteGet<{ id: string }>(
         'SELECT id FROM loss_entries WHERE id = $id AND session_id = $sessionId AND player_id = $playerId',
         { $id: String(payload.entryId), $sessionId: session.id, $playerId: String(payload.playerId) }
       )
       if (!entry) throw new CommandCheckError('Eintrag existiert nicht (mehr) in diesem Spielabend.')
+      if (pendingDeleteOf('loss', String(payload.entryId), store)) {
+        throw new CommandCheckError('Für diesen Eintrag ist bereits eine Löschung beauftragt.')
+      }
+      return
+    }
+    case 'entry.delete': {
+      const kind = payload.kind as EntryKind
+      requireEntry(kind, String(payload.entryId))
+      if (pendingDeleteOf(kind, String(payload.entryId), store)) {
+        throw new CommandCheckError('Für diese Buchung ist bereits eine Löschung beauftragt.')
+      }
+      return
+    }
+    case 'entry.update': {
+      const kind = payload.kind as EntryKind
+      requireEntry(kind, String(payload.entryId))
+      if (payload.amountCents === undefined && payload.note === undefined) {
+        throw new CommandCheckError('Keine Änderung angegeben (Betrag oder Notiz).')
+      }
+      if (typeof payload.amountCents === 'number') {
+        if (kind === 'correction' && payload.amountCents === 0) throw new CommandCheckError('Korrektur darf nicht 0 sein.')
+        if (kind !== 'correction' && payload.amountCents < 0) throw new CommandCheckError('Betrag darf nicht negativ sein.')
+      }
+      if (kind === 'correction' && payload.note !== undefined && !payload.note) {
+        throw new CommandCheckError('Korrekturen brauchen einen Grund.')
+      }
+      if (pendingDeleteOf(kind, String(payload.entryId), store)) {
+        throw new CommandCheckError('Diese Buchung wird bereits gelöscht.')
+      }
+      return
+    }
+    case 'player.rename': {
+      requirePlayer(payload.playerId)
+      const name = String(payload.name).toLowerCase()
+      const taken = sqliteGet<{ id: string }>('SELECT id FROM players WHERE lower(name) = $name AND id != $id LIMIT 1', {
+        $name: name,
+        $id: String(payload.playerId),
+      })
+      const queued = store
+        .listPendingCommands()
+        .some(
+          (command) =>
+            (command.type === 'player.create' || (command.type === 'player.rename' && command.payload.playerId !== payload.playerId)) &&
+            String(command.payload.name).toLowerCase() === name
+        )
+      if (taken || queued) throw new CommandCheckError('Ein anderer Spieler heißt bereits so (oder ist so beauftragt).')
+      return
+    }
+    case 'session.update': {
+      if (!sessionRow(String(payload.sessionId))) throw new CommandCheckError('Spielabend existiert nicht (im letzten Datenstand).')
+      if (payload.title === undefined && payload.stakeCents === undefined) throw new CommandCheckError('Keine Änderung angegeben.')
+      return
+    }
+    case 'session.delete': {
+      if (!sessionRow(String(payload.sessionId))) throw new CommandCheckError('Spielabend existiert nicht (im letzten Datenstand).')
       const duplicate = store
         .listPendingCommands()
-        .some((command) => command.type === 'loss.void' && command.payload.entryId === payload.entryId)
-      if (duplicate) throw new CommandCheckError('Für diesen Eintrag ist bereits eine Stornierung beauftragt.')
+        .some((command) => command.type === 'session.delete' && command.payload.sessionId === payload.sessionId)
+      if (duplicate) throw new CommandCheckError('Für diesen Abend ist bereits eine Löschung beauftragt.')
       return
     }
   }
+}
+
+function requireEntry(kind: EntryKind, entryId: string) {
+  const entry = ENTRY_TABLES[kind] ? sqliteGet<{ id: string }>(`SELECT id FROM ${ENTRY_TABLES[kind].table} WHERE id = $id`, { $id: entryId }) : null
+  if (!entry) throw new CommandCheckError('Buchung existiert nicht (mehr) im letzten Datenstand.')
+}
+
+/** A pending delete of the booking, via entry.delete or (for losses) loss.void. */
+function pendingDeleteOf(kind: EntryKind, entryId: string, store: Store) {
+  return store
+    .listPendingCommands()
+    .some(
+      (command) =>
+        command.payload.entryId === entryId &&
+        ((command.type === 'entry.delete' && command.payload.kind === kind) || (kind === 'loss' && command.type === 'loss.void'))
+    )
+}
+
+/** Adds the booking address (entry.* kind) and the raw note to history rows for the override UI. */
+function withEntryRefs(entries: HistoryEntry[]) {
+  const ids = new Map<EntryKind, string[]>()
+  for (const entry of entries) {
+    const kind = entryKindOf(entry.kind)
+    if (kind) ids.set(kind, [...(ids.get(kind) ?? []), entry.id])
+  }
+  const notes = new Map([...ids].map(([kind, list]) => [kind, entryNotes(kind, list)]))
+  return entries.map((entry) => {
+    const entryKind = entryKindOf(entry.kind)
+    return { ...entry, entryKind, note: entryKind ? (notes.get(entryKind)?.get(entry.id) ?? null) : null }
+  })
 }
 
 export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
@@ -164,7 +250,13 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
     return c.json(result as object)
   }
 
-  app.get('/dashboard', read(() => getDashboardSnapshot()))
+  app.get(
+    '/dashboard',
+    read(() => {
+      const dashboard = getDashboardSnapshot()
+      return { ...dashboard, recentHistory: withEntryRefs(dashboard.recentHistory) }
+    })
+  )
   app.get('/debts', read(() => getDebtSummaries()))
   app.get('/cashbox', read(() => getCashboxSummary()))
   app.get('/settings', read(() => getAppSettings()))
@@ -174,7 +266,8 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
     '/sessions/:id',
     read((c) => {
       const detail = getSessionDetail(c.req.param('id') ?? '')
-      return detail ?? c.json({ error: 'not_found' }, 404)
+      if (!detail) return c.json({ error: 'not_found' }, 404)
+      return { ...detail, timeline: withEntryRefs(detail.timeline) }
     })
   )
   app.get(
@@ -189,9 +282,24 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
         kind,
         includeAudit: includeAudit === '1' || includeAudit === 'true',
       })
-      return entries.slice(0, limit ?? 500)
+      return withEntryRefs(entries.slice(0, limit ?? 500))
     })
   )
+
+  // ---- chart read models (plain SQL on the snapshot) ---------------------
+
+  app.get(
+    '/charts/evenings',
+    read((c) => {
+      const season = c.req.query('season') ?? 'all'
+      if (season !== 'all' && !/^\d{4}$/.test(season)) {
+        return c.json({ error: 'invalid_query', message: 'season muss YYYY oder all sein.' }, 400)
+      }
+      return getEveningsChart(season)
+    })
+  )
+  app.get('/charts/players', read(() => getPlayersChart()))
+  app.get('/charts/cashbox', read(() => getCashboxChart()))
 
   // ---- command queue -----------------------------------------------------
 

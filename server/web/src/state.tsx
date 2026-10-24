@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { formatCurrency, formatSignedCurrency } from '@/domain/format'
 
-import { api, ApiError, type StoredCommand, type ServerStatus } from './api'
+import { api, ApiError, type EntryKind, type StoredCommand, type ServerStatus } from './api'
 
 // ---- tiny router -----------------------------------------------------------
 
@@ -183,7 +183,19 @@ export const COMMAND_LABELS: Record<StoredCommand['type'], string> = {
   'player.create': 'Spieler anlegen',
   'player.update': 'Spieler ändern',
   'settings.update': 'Einstellungen',
-  'loss.void': 'Eintrag stornieren',
+  'loss.void': 'Eintrag löschen',
+  'entry.delete': 'Buchung löschen',
+  'entry.update': 'Buchung ändern',
+  'player.rename': 'Spieler umbenennen',
+  'session.update': 'Abend ändern',
+  'session.delete': 'Abend löschen',
+}
+
+export const ENTRY_KIND_LABELS: Record<EntryKind, string> = {
+  loss: 'Verlust/Bierrunde',
+  payment: 'Zahlung',
+  correction: 'Korrektur',
+  absence: 'Abwesenheit',
 }
 
 const PENALTY_LABELS: Record<string, string> = {
@@ -192,9 +204,10 @@ const PENALTY_LABELS: Record<string, string> = {
   split_absent: 'Durchschnitt auf Abwesende verteilt',
 }
 
-export function describeCommand(command: StoredCommand, names: Map<string, string>) {
+export function describeCommand(command: StoredCommand, names: Map<string, string>, sessions: Map<string, string> = new Map()) {
   const payload = command.payload
   const name = (id: unknown) => names.get(String(id)) ?? 'Unbekannter Spieler'
+  const session = (id: unknown) => (sessions.get(String(id)) ? `„${sessions.get(String(id))}“` : 'Abend')
   switch (command.type) {
     case 'correction.record':
       return `${name(payload.playerId)}: ${formatSignedCurrency(Number(payload.amountCents))} – ${String(payload.reason)}`
@@ -213,8 +226,72 @@ export function describeCommand(command: StoredCommand, names: Map<string, strin
         PENALTY_LABELS[String(payload.absencePenaltyMode)] ?? String(payload.absencePenaltyMode)
       }`
     case 'loss.void':
-      return `Eintrag von ${name(payload.playerId)} stornieren`
+      return `Eintrag von ${name(payload.playerId)} löschen`
+    case 'entry.delete':
+      return `${ENTRY_KIND_LABELS[payload.kind as EntryKind] ?? 'Buchung'} löschen`
+    case 'entry.update':
+      return `${ENTRY_KIND_LABELS[payload.kind as EntryKind] ?? 'Buchung'}: ${describeEntryUpdate(payload)}`
+    case 'player.rename':
+      return `${name(payload.playerId)} heißt künftig „${String(payload.name)}“`
+    case 'session.update':
+      return `${session(payload.sessionId)}: ${describeSessionUpdate(payload)}`
+    case 'session.delete':
+      return `${session(payload.sessionId)} mit allen Buchungen löschen`
   }
+}
+
+export function describeEntryUpdate(payload: Record<string, unknown>) {
+  const parts: string[] = []
+  if (payload.amountCents !== undefined) parts.push(`Betrag → ${formatCurrency(Number(payload.amountCents))}`)
+  if (payload.note !== undefined) parts.push(payload.note ? `Notiz → „${String(payload.note)}“` : 'Notiz entfernt')
+  return parts.join(', ')
+}
+
+export function describeSessionUpdate(payload: Record<string, unknown>) {
+  const parts: string[] = []
+  if (payload.title !== undefined) parts.push(`Titel → „${String(payload.title)}“`)
+  if (payload.stakeCents !== undefined) parts.push(`Einsatz → ${formatCurrency(Number(payload.stakeCents))}`)
+  return parts.join(', ')
+}
+
+// ---- pending overrides -----------------------------------------------------
+
+export type PendingOverrides = {
+  /** Pending delete per booking (`kind:id`), via entry.delete or loss.void. */
+  entryDeletes: Map<string, StoredCommand>
+  /** All pending edits per booking (`kind:id`), oldest first. */
+  entryUpdates: Map<string, StoredCommand[]>
+  sessionDeletes: Map<string, StoredCommand>
+  sessionUpdates: Map<string, StoredCommand[]>
+  renames: Map<string, StoredCommand[]>
+}
+
+export const entryKey = (kind: EntryKind, id: string) => `${kind}:${id}`
+
+export function pendingOverrides(pending: StoredCommand[]): PendingOverrides {
+  const result: PendingOverrides = {
+    entryDeletes: new Map(),
+    entryUpdates: new Map(),
+    sessionDeletes: new Map(),
+    sessionUpdates: new Map(),
+    renames: new Map(),
+  }
+  const push = (map: Map<string, StoredCommand[]>, key: string, command: StoredCommand) => map.set(key, [...(map.get(key) ?? []), command])
+  for (const command of pending) {
+    const payload = command.payload
+    if (command.type === 'entry.delete') result.entryDeletes.set(entryKey(payload.kind as EntryKind, String(payload.entryId)), command)
+    if (command.type === 'loss.void') result.entryDeletes.set(entryKey('loss', String(payload.entryId)), command)
+    if (command.type === 'entry.update') push(result.entryUpdates, entryKey(payload.kind as EntryKind, String(payload.entryId)), command)
+    if (command.type === 'session.delete') result.sessionDeletes.set(String(payload.sessionId), command)
+    if (command.type === 'session.update') push(result.sessionUpdates, String(payload.sessionId), command)
+    if (command.type === 'player.rename') push(result.renames, String(payload.playerId), command)
+  }
+  return result
+}
+
+export function usePendingOverrides() {
+  const { pending } = useApp()
+  return useMemo(() => pendingOverrides(pending), [pending])
 }
 
 /** Pending effects for one player, for the "ausstehend" hints next to real numbers. */
@@ -226,7 +303,8 @@ export function pendingForPlayer(pending: StoredCommand[], playerId: string) {
 export function pendingDebtEffect(command: StoredCommand) {
   if (command.type === 'payment.record') return `−${formatCurrency(Number(command.payload.amountCents))} Zahlung`
   if (command.type === 'correction.record') return `${formatSignedCurrency(Number(command.payload.amountCents))} Korrektur`
-  if (command.type === 'loss.void') return 'Stornierung'
+  if (command.type === 'loss.void') return 'Eintrag wird gelöscht'
+  if (command.type === 'player.rename') return `heißt künftig „${String(command.payload.name)}“`
   if (command.type === 'player.update') return 'Statusänderung'
   return COMMAND_LABELS[command.type]
 }

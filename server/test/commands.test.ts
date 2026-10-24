@@ -53,8 +53,8 @@ describe('command lifecycle', () => {
 
     const closedLoss = (await (await server.admin(`/api/admin/sessions/${ids.closedSessionId}`)).json()).losses[0]
     const closed = await queue('loss.void', { sessionId: ids.closedSessionId, playerId: closedLoss.playerId, entryId: closedLoss.id })
-    expect(closed.status).toBe(422)
-    expect((await closed.json()).message).toContain('offener')
+    // loss.void is an override now: closed evenings are allowed
+    expect(closed.status).toBe(201)
 
     const loss = await lossOf(ids, ids.players.cem)
     expect((await queue('loss.void', { sessionId: ids.openSessionId, playerId: ids.players.anna, entryId: loss.id })).status).toBe(422)

@@ -48,7 +48,15 @@ export function wrapDatabase(db: DatabaseSync) {
         depth--
       }
     },
+    closeSync() {
+      db.close()
+    },
   }
+}
+
+/** Throw-away in-memory database (the app builds its reference schema with it). */
+export function openScratchDatabase() {
+  return wrapDatabase(new DatabaseSync(':memory:'))
 }
 
 let active: SqliteAdapter | null = null

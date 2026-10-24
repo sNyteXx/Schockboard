@@ -1,3 +1,4 @@
+import type { HistoryEntry } from '@/domain/types'
 import type { CommandType } from '@/remote/protocol'
 
 export type {
@@ -11,6 +12,63 @@ export type {
   SessionOverview,
 } from '@/domain/types'
 export type { CommandType }
+
+/** Booking table addressed by entry.* override commands. */
+export type EntryKind = 'loss' | 'payment' | 'correction' | 'absence'
+
+/** History rows as served by the admin API: with the booking address and the raw note. */
+export type HistoryRow = HistoryEntry & { entryKind?: EntryKind | null; note?: string | null }
+
+// ---- chart read models (server/src/charts.ts) ------------------------------
+
+export type EveningPlayerRow = { playerId: string; playerName: string; lossCents: number; beerCents: number; absenceCents: number }
+
+export type EveningChartRow = {
+  sessionId: string
+  date: string
+  title: string
+  lossCents: number
+  beerCents: number
+  absenceCents: number
+  totalCents: number
+  players: EveningPlayerRow[]
+}
+
+export type EveningsChart = { season: string; seasons: string[]; evenings: EveningChartRow[] }
+
+export type DebtPoint = {
+  at: string
+  kind: 'evening' | 'payment' | 'correction'
+  deltaCents: number
+  debtCents: number
+  sessionId: string | null
+  label: string
+  open?: boolean
+}
+
+export type PlayerChartRow = {
+  playerId: string
+  playerName: string
+  isCore: boolean
+  isArchived: boolean
+  totals: {
+    lossCents: number
+    beerCents: number
+    absenceCents: number
+    paymentCents: number
+    correctionCents: number
+    openDebtCents: number
+  }
+  eveningsAttended: number
+  eveningsMissed: number
+  timeline: DebtPoint[]
+}
+
+export type CashboxChart = {
+  totalPaymentsCents: number
+  openDebtCents: number
+  payments: Array<{ id: string; at: string; playerId: string; playerName: string; amountCents: number; cumulativeCents: number }>
+}
 
 export type CommandStatus = 'pending' | 'applied' | 'rejected' | 'cancelled'
 
