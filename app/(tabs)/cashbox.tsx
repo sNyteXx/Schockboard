@@ -2,7 +2,7 @@ import { ActivityIndicator } from "react-native";
 import { useEffect, useState } from "react";
 
 import { BrandHero } from "@/components/brand";
-import { Button, Card, EmptyState, Field, Notice, Screen, SectionTitle, Select, Split, Stack, StatCard, ListRow, Input } from "@/components/ui";
+import { Button, Card, EmptyState, Field, Notice, Screen, SectionTitle, Select, Split, Stack, StatCard, ListRow, Input, LoadError } from "@/components/ui";
 import { formatCurrency } from "@/domain/format";
 import { cleanOptionalText, parseEuroToCents } from "@/domain/utils";
 import { useAsyncResource } from "@/hooks/use-async-resource";
@@ -39,6 +39,8 @@ export default function CashboxScreen() {
       setPlayerId(defaultPlayerId);
     }
   }, [data.data, playerId]);
+
+  if (data.error && !data.loading) return <LoadError error={data.error} onRetry={data.reload} />
 
   if (data.loading || !data.data || !runtime.account) {
     return (

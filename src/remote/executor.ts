@@ -2,7 +2,7 @@ import { getSqlite, sqliteAll, sqliteGet, sqliteRun } from '@/db/client'
 import {
   createAuditEvent,
   createPlayer,
-  deleteLastLoss,
+  deleteLastLossUnsafe,
   recordCorrection,
   recordPayment,
   updateAppSettings,
@@ -43,14 +43,11 @@ function dispatch(command: RemoteCommand, actor: Actor) {
     }
     case 'loss.void': {
       const payload = parseCommandPayload(command.type, command.payload)
-      deleteLastLoss({ actor, ...payload })
+      deleteLastLossUnsafe({ actor, ...payload })
       return
     }
   }
 }
-
-// deleteLastLoss opens its own transaction; expo-sqlite cannot nest them.
-const SELF_TRANSACTIONAL = new Set<RemoteCommand['type']>(['loss.void'])
 
 function recordInbox(command: RemoteCommand, status: CommandResult['status'], error: string | null) {
   sqliteRun(
@@ -96,11 +93,8 @@ export function applyRemoteCommands(commands: RemoteCommand[], actor: Actor) {
     if (seen) continue
 
     try {
-      if (SELF_TRANSACTIONAL.has(command.type)) {
-        apply(command, actor)
-      } else {
-        getSqlite().withTransactionSync(() => apply(command, actor))
-      }
+      // Change, audit event and inbox row commit together or not at all.
+      getSqlite().withTransactionSync(() => apply(command, actor))
       changed++
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unbekannter Fehler'

@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-nati
 import { useEffect, useMemo, useState } from "react";
 
 import { BrandHero } from "@/components/brand";
-import { Badge, Button, Card, EmptyState, Field, Input, ListRow, Notice, Screen, SectionTitle, Split, Stack } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, ListRow, Notice, Screen, SectionTitle, Split, Stack, LoadError } from "@/components/ui";
 import { formatCurrency, formatDate, formatDateTime } from "@/domain/format";
 import { parseEuroToCents } from "@/domain/utils";
 import { useAsyncResource } from "@/hooks/use-async-resource";
@@ -34,6 +34,8 @@ export default function SessionsScreen() {
       setStake((configuredStake / 100).toFixed(2).replace(".", ","));
     }
   }, [configuredStake]);
+
+  if (data.error && !data.loading) return <LoadError error={data.error} onRetry={data.reload} />
 
   if (data.loading || !data.data || !runtime.account) {
     return (

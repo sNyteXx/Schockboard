@@ -12,6 +12,7 @@ function translateAuditEvent(eventType: string) {
     'correction.recorded': 'Korrektur eingetragen',
     'loss.logged': 'Verlust eingetragen',
     'loss.deleted': 'Verlust gelöscht',
+    'schema.repaired': 'Datenbank nach Update ergänzt',
     'remote.command_applied': 'Über Web-Verwaltung ausgeführt',
     'migration.correction_neutralized': 'Doppelte Storno-Buchung neutralisiert (Update 2.0)',
     'payment.recorded': 'Zahlung eingetragen',

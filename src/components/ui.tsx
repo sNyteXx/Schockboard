@@ -342,3 +342,16 @@ export function ListRow({
     </View>
   );
 }
+
+/** Full-screen load failure with retry – never leave the user on a spinner. */
+export function LoadError({ error, onRetry }: { error: Error; onRetry: () => void }) {
+  return (
+    <Screen>
+      <Card>
+        <SectionTitle eyebrow="Fehler" title="Daten konnten nicht geladen werden" />
+        <Notice type="error" message={error.message} />
+        <Button onPress={onRetry}>Erneut versuchen</Button>
+      </Card>
+    </Screen>
+  );
+}

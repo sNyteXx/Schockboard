@@ -964,6 +964,18 @@ export function toggleAttendance(input: { actor: Actor; sessionId: string; playe
 
   const nextValue = row.present ? 0 : 1
 
+  // Marking someone absent who already has bookings tonight would also charge
+  // them an absence fee at close; their entries must be voided first.
+  if (nextValue === 0) {
+    const booked = sqliteGet<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM loss_entries WHERE session_id = $sessionId AND player_id = $playerId',
+      { $sessionId: input.sessionId, $playerId: input.playerId }
+    )
+    if (booked && booked.n > 0) {
+      throw new Error('Spieler hat heute schon Buchungen – erst stornieren, dann als abwesend markieren.')
+    }
+  }
+
   sqliteRun(
     `
       UPDATE session_attendance
@@ -1212,6 +1224,11 @@ export function addBeerRoundEntry(input: {
 }
 
 export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerId: string; entryId?: string }) {
+  getSqlite().withTransactionSync(() => deleteLastLossUnsafe(input))
+}
+
+/** Same as deleteLastLoss, for callers that already hold a transaction. */
+export function deleteLastLossUnsafe(input: { actor: Actor; sessionId: string; playerId: string; entryId?: string }) {
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     { $sessionId: input.sessionId }
@@ -1253,7 +1270,7 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
   const playerRow = sqliteGet<{ name: string }>('SELECT name FROM players WHERE id = $id', {
     $id: input.playerId,
   })
-  getSqlite().withTransactionSync(() => {
+  {
     sqliteRun('DELETE FROM loss_entries WHERE id = $id', { $id: lastLoss.id })
 
     // This row documents the reversal. Removing the original loss already
@@ -1288,7 +1305,7 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
         correctionId,
       },
     })
-  })
+  }
 }
 
 export function closeSession(input: { actor: Actor; sessionId: string }) {

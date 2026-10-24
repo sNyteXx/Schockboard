@@ -78,7 +78,13 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
     bumpDataVersion() {
       setDataVersion((value) => value + 1)
     },
-    setFlash,
+    setFlash(next: FlashMessage | null) {
+      setFlash(next)
+      // Success banners fade away on their own; errors stay until replaced.
+      if (next?.type === 'success') {
+        setTimeout(() => setFlash((current) => (current === next ? null : current)), 4_000)
+      }
+    },
     setViewMode(mode: ViewMode) {
       if (account) {
         SessionService.updateViewMode({
@@ -129,9 +135,7 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
       )
     },
     scheduleUndo(action) {
-      UndoService.scheduleUndo(action, () => {
-        setFlash(null)
-      })
+      UndoService.scheduleUndo(action, () => {})
     },
     cancelUndo() {
       UndoService.cancelPendingUndo()

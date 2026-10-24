@@ -4,7 +4,7 @@ vi.mock('expo-crypto', async () => (await import('./support/memory-sqlite')).cry
 vi.mock('@/db/client', async () => (await import('./support/memory-sqlite')).clientMock)
 
 import { ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
-import { createPlayer, getDebtSummaries, listPlayers } from '@/db/queries'
+import { addLossEntry, createPlayer, createSession, getDebtSummaries, listPlayers } from '@/db/queries'
 import { applyRemoteCommands, getUnreportedResults, markResultsReported } from '@/remote/executor'
 import type { RemoteCommand } from '@/remote/protocol'
 import { createMemoryDatabase, memory } from './support/memory-sqlite'
@@ -63,5 +63,19 @@ describe('remote command executor', () => {
     expect(listPlayers().find((player) => player.id === gerd.id)!.isCore).toBe(true)
     markResultsReported(getUnreportedResults().map((row) => row.id))
     expect(getUnreportedResults()).toEqual([])
+  })
+
+  it('voids the exact remote entry atomically and only once', () => {
+    const playerId = createPlayer({ actor, name: 'Ben', isCore: true })
+    createSession({ actor, title: 'Abend', notes: null, stakeCents: 100 })
+    const sessionId = memory.current.getFirstSync<{ id: string }>("SELECT id FROM sessions WHERE status = 'open'")!.id
+    const first = addLossEntry({ actor, sessionId, playerId, note: null })
+    addLossEntry({ actor, sessionId, playerId, note: null })
+    const voidFirst = command('cmd_v', 'loss.void', { sessionId, playerId, entryId: first })
+
+    expect(applyRemoteCommands([voidFirst], actor)).toBe(1)
+    expect(applyRemoteCommands([voidFirst], actor)).toBe(0)
+    expect(memory.current.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM loss_entries')!.n).toBe(1)
+    expect(memory.current.getFirstSync<{ id: string }>('SELECT id FROM loss_entries')!.id).not.toBe(first)
   })
 })

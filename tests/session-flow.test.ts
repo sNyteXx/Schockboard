@@ -114,3 +114,14 @@ describe('voiding losses', () => {
     expect(() => deleteLastLoss({ actor, sessionId, playerId: present[0] })).toThrow(/offene/)
   })
 })
+
+describe('attendance guard', () => {
+  it('refuses to mark a player absent who already has bookings tonight', () => {
+    const { sessionId, present } = setUpEvening('full_average')
+    addLossEntry({ actor, sessionId, playerId: present[0], note: null })
+
+    expect(() => toggleAttendance({ actor, sessionId, playerId: present[0] })).toThrow(/Buchungen/)
+    deleteLastLoss({ actor, sessionId, playerId: present[0] })
+    expect(() => toggleAttendance({ actor, sessionId, playerId: present[0] })).not.toThrow()
+  })
+})

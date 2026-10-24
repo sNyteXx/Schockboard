@@ -1,6 +1,4 @@
 import "react-native-gesture-handler";
-// Registers the background sync task at module scope (required by Android).
-import "@/remote/background";
 
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";

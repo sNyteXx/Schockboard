@@ -16,6 +16,11 @@ export function getSqlite() {
   return sqlite;
 }
 
+/** Throw-away in-memory database, e.g. to build the reference schema. */
+export function openScratchDatabase() {
+  return openDatabaseSync(":memory:");
+}
+
 export function getDrizzle() {
   if (!drizzleDb) {
     drizzleDb = drizzle(getSqlite(), { schema });

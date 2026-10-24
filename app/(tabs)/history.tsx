@@ -15,7 +15,7 @@ import {
   Select,
   Split,
   Stack,
-} from '@/components/ui'
+ LoadError } from '@/components/ui'
 import { formatDateTime, formatSignedCurrency } from '@/domain/format'
 import { describeHistoryEntry } from '@/domain/history'
 import { cleanOptionalText, parseSignedEuroToCents } from '@/domain/utils'
@@ -56,6 +56,8 @@ export default function HistoryScreen() {
 
     setCorrectionPlayerId(data.data.players[0]?.id ?? '')
   }, [correctionPlayerId, data.data])
+
+  if (data.error && !data.loading) return <LoadError error={data.error} onRetry={data.reload} />
 
   if (data.loading || !data.data || !runtime.account) {
     return (

@@ -2,7 +2,7 @@ import { ActivityIndicator, Alert, Pressable, Text } from "react-native";
 import { useEffect, useState } from "react";
 
 import { BrandHero } from "@/components/brand";
-import { Badge, Button, Card, Field, Input, Notice, Screen, SectionTitle, Select, Split, Stack } from "@/components/ui";
+import { Badge, Button, Card, Field, Input, Notice, Screen, SectionTitle, Select, Split, Stack, LoadError } from "@/components/ui";
 import { formatCurrency } from "@/domain/format";
 import type { AbsencePenaltyMode, ThemeId, ViewMode } from "@/domain/types";
 import { parseEuroToCents } from "@/domain/utils";
@@ -66,6 +66,8 @@ export default function SettingsScreen() {
     setCashboxLabel(data.data.settings.cashboxLabel);
     setAbsencePenaltyMode(data.data.settings.absencePenaltyMode);
   }, [data.data]);
+
+  if (data.error && !data.loading) return <LoadError error={data.error} onRetry={data.reload} />
 
   if (data.loading || !data.data || !runtime.account) {
     return (

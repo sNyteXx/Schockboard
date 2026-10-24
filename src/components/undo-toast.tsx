@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import Animated, {
   Easing,
   cancelAnimation,
@@ -50,6 +50,9 @@ export function UndoToast({
   const remaining = useSharedValue(1)
 
   const { isTablet } = useDeviceLayout()
+  const { width: windowWidth } = useWindowDimensions()
+  // Absolute views ignore alignSelf: center the toast explicitly (max 560 dp).
+  const toastWidth = Math.min(windowWidth - 32, 560)
   const [lift, setLift] = useState(toastLift)
 
   useEffect(() => {
@@ -106,7 +109,7 @@ export function UndoToast({
   if (!label) return null
 
   return (
-    <Animated.View style={[styles.container, { bottom: Math.max(insets.bottom, 12) + (isTablet ? 12 : 72) + lift }, containerStyle]}>
+    <Animated.View style={[styles.container, { bottom: Math.max(insets.bottom, 12) + (isTablet ? 12 : 72) + lift, width: toastWidth, left: (windowWidth - toastWidth) / 2 }, containerStyle]}>
       <View style={styles.row}>
         <Text style={styles.text}>{label}</Text>
         <Pressable accessibilityRole="button" onPress={handleUndo} style={({ pressed }) => [styles.button, pressed && { opacity: 0.75 }]}>
@@ -124,10 +127,6 @@ function makeStyles() {
   return StyleSheet.create({
     container: {
       position: 'absolute',
-      left: 16,
-      right: 16,
-      maxWidth: 560,
-      alignSelf: 'center',
       backgroundColor: colors.bgElevated,
       borderColor: colors.accent,
       borderWidth: 1,

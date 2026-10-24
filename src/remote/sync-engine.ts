@@ -9,6 +9,10 @@ import { deviceCommandsResponseSchema, enrollResponseSchema } from '@/remote/pro
 import { AuthService } from '@/services/auth-service'
 
 const REQUEST_TIMEOUT_MS = 20_000
+// The snapshot is the whole database: allow ~1 MB per 10 s on slow networks.
+const uploadTimeoutMs = (bytes: number) => Math.max(60_000, Math.ceil(bytes / 100_000) * 1_000)
+// After failures wait 1, 2, 4 … up to 15 minutes before the next attempt.
+const MAX_BACKOFF_MS = 15 * 60_000
 // While the server refuses new devices, ask again at most this often.
 const ENROLL_RETRY_MS = 15 * 60_000
 
@@ -23,9 +27,17 @@ let running: Promise<SyncOutcome> | null = null
 let lastOutcome: SyncOutcome | null = null
 const listeners = new Set<(outcome: SyncOutcome) => void>()
 
-async function request(config: RemoteConfig, path: string, init: { method?: string; body?: string | ArrayBuffer; headers?: Record<string, string> } = {}) {
+let failures = 0
+let nextAttemptAt = 0
+let tokenWasRejected = false
+
+async function request(
+  config: RemoteConfig,
+  path: string,
+  init: { method?: string; body?: string | ArrayBuffer; headers?: Record<string, string>; timeoutMs?: number } = {}
+) {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? REQUEST_TIMEOUT_MS)
   try {
     const response = await fetch(`${config.server}${path}`, {
       method: init.method ?? 'GET',
@@ -58,7 +70,14 @@ function localFingerprint() {
   return row?.fp ?? ''
 }
 
+/** An empty database (fresh install or "App zurücksetzen") must never replace the server copy. */
+function hasAnyData() {
+  const row = sqliteGet<{ n: number }>('SELECT (SELECT COUNT(*) FROM players) + (SELECT COUNT(*) FROM sessions) AS n')
+  return (row?.n ?? 0) > 0
+}
+
 async function uploadSnapshotIfChanged(config: RemoteConfig) {
+  if (!hasAnyData()) return false
   const fingerprint = localFingerprint()
   if (fingerprint === (await RemoteConfigStore.getUploadedFingerprint())) return false
 
@@ -68,6 +87,7 @@ async function uploadSnapshotIfChanged(config: RemoteConfig) {
   await request(config, '/api/device/snapshot', {
     method: 'PUT',
     body: image,
+    timeoutMs: uploadTimeoutMs(image.byteLength),
     headers: {
       'Content-Type': 'application/vnd.sqlite3',
       'X-Schockboard-Schema': String(LATEST_SCHEMA_VERSION),
@@ -145,12 +165,14 @@ async function runSync(): Promise<SyncOutcome> {
 export const SyncEngine = {
   /** Runs one sync round; concurrent callers share the in-flight round. */
   syncNow(): Promise<SyncOutcome> {
+    if (!running && Date.now() < nextAttemptAt && lastOutcome) return Promise.resolve(lastOutcome)
     if (!running) {
       running = runSync()
         .catch(async (error): Promise<SyncOutcome> => {
           // Revoked or replaced on the server: forget the token so the app
           // can enroll again once the admin allows a new device.
-          if (error instanceof DeviceRejectedError) await RemoteConfigStore.clear()
+          tokenWasRejected = error instanceof DeviceRejectedError
+          if (tokenWasRejected) await RemoteConfigStore.clear()
           return {
             status: 'error',
             message: error instanceof Error ? error.message : 'Sync fehlgeschlagen.',
@@ -158,6 +180,10 @@ export const SyncEngine = {
           }
         })
         .then((outcome) => {
+          // A rejected token is not a network problem: re-enrollment has its own throttle.
+          failures = outcome.status === 'error' && !tokenWasRejected ? failures + 1 : 0
+          tokenWasRejected = false
+          nextAttemptAt = failures ? Date.now() + Math.min(MAX_BACKOFF_MS, 60_000 * 2 ** (failures - 1)) : 0
           lastOutcome = outcome
           for (const listener of listeners) listener(outcome)
           return outcome

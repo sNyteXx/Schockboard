@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-nati
 import Animated, { FadeIn, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated'
 
 import { BrandHero } from '@/components/brand'
-import { Badge, Card, EmptyState, Notice, Screen, SectionTitle, Split, Stack } from '@/components/ui'
+import { Badge, Card, EmptyState, Notice, Screen, SectionTitle, Split, Stack, LoadError } from '@/components/ui'
 import { getStatistics, type PlayerStats } from '@/db/stats-queries'
 import { formatCurrency, formatDate } from '@/domain/format'
 import { useAsyncResource } from '@/hooks/use-async-resource'
@@ -25,6 +25,8 @@ export default function StatsScreen() {
   const [season, setSeason] = useState<string | null>(null)
   const [metric, setMetric] = useState<Metric>('lossCount')
   const data = useAsyncResource(() => getStatistics(season), [runtime.dataVersion, season])
+
+  if (data.error && !data.loading) return <LoadError error={data.error} onRetry={data.reload} />
 
   if (data.loading && !data.data) {
     return <Screen><ActivityIndicator color={colors.accentStrong} size="large" /></Screen>

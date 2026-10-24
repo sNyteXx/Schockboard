@@ -1,6 +1,6 @@
 import { SCHOCK_RULE_PROFILE } from '@/domain/rules'
 import { nowIso } from '@/domain/utils'
-import { getSqlite, sqliteGet, sqliteRun } from '@/db/client'
+import { getSqlite, openScratchDatabase, sqliteGet, sqliteRun } from '@/db/client'
 
 const MIGRATIONS = [
   {
@@ -302,7 +302,13 @@ function applyMigrations() {
     }
 
     getSqlite().withTransactionSync(() => {
-      getSqlite().execSync(migration.sql)
+      try {
+        getSqlite().execSync(migration.sql)
+      } catch (error) {
+        // Early builds already created some of these columns under other
+        // migration numbers; repairSchema() covers anything still missing.
+        if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error
+      }
       sqliteRun(
         `
           INSERT OR REPLACE INTO schema_migrations (version, name, applied_at)
@@ -316,6 +322,86 @@ function applyMigrations() {
       )
     })
   }
+}
+
+type ColumnInfo = { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }
+type SchemaObject = { type: 'table' | 'view' | 'index'; name: string; sql: string | null }
+
+/**
+ * Brings the live database up to the reference schema, whatever its
+ * migration history claims. Early builds (e.g. 1.0.0 from March 2026)
+ * numbered migrations differently, so their schema_migrations says
+ * "done" while columns such as app_settings.view_mode are missing.
+ *
+ * The reference is built by running every migration on an empty in-memory
+ * database; missing tables, columns and indexes are added, views recreated.
+ * Existing rows are never touched. Returns the list of repairs.
+ */
+export function repairSchema(): string[] {
+  const reference = openScratchDatabase()
+  const repairs: string[] = []
+
+  try {
+    for (const migration of MIGRATIONS) reference.execSync(migration.sql)
+
+    const db = getSqlite()
+    const wanted = reference.getAllSync<SchemaObject>(
+      "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view', 'index') AND name NOT LIKE 'sqlite_%'"
+    )
+    const present = new Set(
+      db.getAllSync<{ name: string }>("SELECT name FROM sqlite_master WHERE type IN ('table', 'view', 'index')").map((row) => row.name)
+    )
+
+    db.withTransactionSync(() => {
+      for (const table of wanted.filter((object) => object.type === 'table' && object.sql)) {
+        if (!present.has(table.name)) {
+          db.execSync(table.sql!)
+          repairs.push(`table ${table.name}`)
+          continue
+        }
+        const have = new Set(db.getAllSync<ColumnInfo>(`PRAGMA table_info("${table.name}")`).map((column) => column.name))
+        for (const column of reference.getAllSync<ColumnInfo>(`PRAGMA table_info("${table.name}")`)) {
+          if (have.has(column.name) || column.pk > 0) continue
+          // SQLite needs a default to add a NOT NULL column to existing rows.
+          const fallback = /INT|REAL|NUM/i.test(column.type) ? '0' : "''"
+          const defaultValue = column.dflt_value ?? (column.notnull ? fallback : null)
+          db.execSync(
+            `ALTER TABLE "${table.name}" ADD COLUMN "${column.name}" ${column.type}` +
+              (column.notnull && defaultValue !== null ? ' NOT NULL' : '') +
+              (defaultValue !== null ? ` DEFAULT ${defaultValue}` : '')
+          )
+          repairs.push(`column ${table.name}.${column.name}`)
+        }
+      }
+
+      for (const index of wanted.filter((object) => object.type === 'index' && object.sql)) {
+        if (present.has(index.name)) continue
+        db.execSync(index.sql!.replace(/^CREATE (UNIQUE )?INDEX /i, (match) => `${match}IF NOT EXISTS `))
+        repairs.push(`index ${index.name}`)
+      }
+
+      // Views select specific columns: rebuild them after any repair.
+      for (const view of wanted.filter((object) => object.type === 'view' && object.sql)) {
+        if (repairs.length === 0 && present.has(view.name)) continue
+        db.execSync(`DROP VIEW IF EXISTS "${view.name}"`)
+        db.execSync(view.sql!)
+        if (!present.has(view.name)) repairs.push(`view ${view.name}`)
+      }
+
+      if (repairs.length > 0) {
+        sqliteRun(
+          `INSERT INTO audit_events (id, actor_account_id, event_type, entity_type, entity_id, session_id, payload_json, created_at)
+           VALUES ($id, NULL, 'schema.repaired', 'database', 'schema', NULL, $payload, $createdAt)`,
+          { $id: `audit_repair_${Date.now()}`, $payload: JSON.stringify({ repairs }), $createdAt: nowIso() }
+        )
+      }
+    })
+  } finally {
+    reference.closeSync()
+  }
+
+  if (repairs.length > 0) console.warn('[Schockboard] Schema repariert:', repairs.join(', '))
+  return repairs
 }
 
 function ensureSettings() {
@@ -359,6 +445,7 @@ export function ensureDatabaseReady() {
   }
 
   applyMigrations()
+  repairSchema()
   ensureSettings()
   bootstrapped = true
 }

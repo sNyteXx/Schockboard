@@ -42,6 +42,7 @@ import { useAsyncResource } from '@/hooks/use-async-resource'
 import { useTableMode } from '@/hooks/use-table-mode'
 import { useRuntime } from '@/providers/runtime-provider'
 import { Feedback } from '@/services/haptics'
+import { UndoService } from '@/services/undo-service'
 import { useUndoToastLift } from '@/components/undo-toast'
 import { SessionService } from '@/services/session-service'
 import { colors, radius, spacing } from '@/theme/tokens'
@@ -143,6 +144,8 @@ export default function SessionDetailScreen() {
   const actor = { accountId: runtime.account.id, username: runtime.account.username }
 
   function goTo(next: EveningStep) {
+    // Leaving the attendance step must not silently drop an edited stake.
+    if (step === 'attendance' && next !== 'attendance' && !isClosed && !saveStakeIfChanged()) return
     setSheet(null)
     setStep(next)
   }
@@ -179,7 +182,8 @@ export default function SessionDetailScreen() {
   function startEvening() {
     if (!saveStakeIfChanged()) return
     Feedback.success()
-    goTo('live')
+    setSheet(null)
+    setStep('live')
   }
 
   function closeSession() {
@@ -242,7 +246,8 @@ export default function SessionDetailScreen() {
     try {
       SessionService.deleteLastLoss({ actor, sessionId: session.id, playerId: targetPlayerId })
       runtime.bumpDataVersion()
-      runtime.cancelUndo()
+      // Only drop the pending undo if it belongs to this player's booking.
+      if (UndoService.getPendingUndo()?.playerId === targetPlayerId) runtime.cancelUndo()
       runtime.setFlash({ type: 'success', message: 'Letzter Verlust storniert.' })
     } catch (error) {
       showError(error, 'Verlust konnte nicht storniert werden.')

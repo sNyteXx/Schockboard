@@ -48,3 +48,8 @@ yarn-error.*
 *.aab
 release-build.log
 *_dump*.xml
+
+# device test screenshots
+.emu-*.png
+.tab-*.png
+.dev-*.png

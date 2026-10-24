@@ -125,7 +125,10 @@ export default function OnboardingScreen() {
         message: pending.length ? `${pending.length} Stammspieler angelegt – viel Glück beim ersten Abend!` : 'Einstellungen gespeichert.',
       })
       Feedback.success()
-      router.replace('/(tabs)')
+      // Completing counts like skipping: never force the assistant again,
+      // even if the regulars are added (or archived) later.
+      void markOnboardingSkipped()
+      leave()
     } catch (caught) {
       Feedback.error()
       setError(caught instanceof Error ? caught.message : 'Einrichtung konnte nicht gespeichert werden.')
@@ -136,7 +139,13 @@ export default function OnboardingScreen() {
 
   async function skip() {
     await markOnboardingSkipped()
-    router.replace('/(tabs)')
+    leave()
+  }
+
+  /** Opened from the dashboard → go back; started on launch → enter the tabs. */
+  function leave() {
+    if (router.canGoBack()) router.back()
+    else router.replace('/(tabs)')
   }
 
   return (

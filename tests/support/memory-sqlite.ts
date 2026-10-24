@@ -36,6 +36,9 @@ export function createMemoryDatabase() {
     getAllSync<T>(source: string, params?: Params) {
       return db.prepare(source).all(bind(params)) as T[]
     },
+    closeSync() {
+      db.close()
+    },
     /** Same contract as expo-sqlite's serializeSync: the database file image. */
     serializeSync() {
       const dir = mkdtempSync(join(tmpdir(), 'sb-serialize-'))
@@ -71,6 +74,7 @@ export const memory = { current: createMemoryDatabase() }
 
 export const clientMock = {
   getSqlite: () => memory.current,
+  openScratchDatabase: () => createMemoryDatabase(),
   sqliteRun: (source: string, params: Params = {}) => memory.current.runSync(source, params),
   sqliteGet: <T>(source: string, params: Params = {}) => memory.current.getFirstSync<T>(source, params),
   sqliteAll: <T>(source: string, params: Params = {}) => memory.current.getAllSync<T>(source, params),

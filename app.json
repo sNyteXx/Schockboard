@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "de.schockboard.apk",
-      "versionCode": 200,
+      "versionCode": 204,
       "adaptiveIcon": {
         "backgroundColor": "#130f0b",
         "foregroundImage": "./assets/android-icon-foreground.png",

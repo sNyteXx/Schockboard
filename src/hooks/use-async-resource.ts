@@ -25,6 +25,8 @@ export function useAsyncResource<T>(loader: () => Promise<T> | T, deps: unknown[
           return;
         }
 
+        // Shows up in `adb logcat -s ReactNativeJS` even in release builds.
+        console.warn("[Schockboard] Laden fehlgeschlagen:", caught instanceof Error ? caught.message : caught);
         setError(caught instanceof Error ? caught : new Error("Unbekannter Fehler."));
       } finally {
         if (active) {

@@ -229,14 +229,15 @@ function PlayerTile({
   return (
     <ReanimatedSwipeable
       ref={swipeRef}
-      enabled={canRemove}
+      // Stays enabled while closing; a swipe with nothing to void just snaps back.
+      enabled={!isClosed}
       friction={1.6}
       rightThreshold={SWIPE_ACTION_WIDTH * 0.6}
       overshootRight={false}
       containerStyle={{ width, borderRadius: radius.lg }}
       renderRightActions={(progress) => <VoidAction progress={progress} />}
       onSwipeableWillOpen={() => {
-        handleRemove()
+        if (canRemove) handleRemove()
         swipeRef.current?.close()
       }}
     >
@@ -274,6 +275,9 @@ export function PlayerBoard({
   const [gridWidth, setGridWidth] = useState(0)
   const gap = spacing.sm
   const tileWidth: number | '100%' = columns <= 1 || gridWidth <= 0 ? '100%' : Math.floor((gridWidth - gap * (columns - 1)) / columns)
+  // "− count +" in one row needs ~200 dp; narrower tiles (two columns on a
+  // phone) stack the counter above the buttons so "+" is never clipped.
+  const compact = dense || (typeof tileWidth === 'number' && tileWidth < 210)
 
   return (
     <View style={{ gap: spacing.md }}>
@@ -299,7 +303,7 @@ export function PlayerBoard({
               key={player.id}
               player={player}
               width={tileWidth}
-              dense={dense}
+              dense={compact}
               swipeToVoid={swipeToVoid && !isClosed}
               isClosed={isClosed}
               onAdd={onAdd}

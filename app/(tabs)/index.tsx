@@ -2,7 +2,7 @@ import { useRouter } from "expo-router";
 import { ActivityIndicator, Text } from "react-native";
 
 import { BrandHero } from "@/components/brand";
-import { Badge, Button, Card, EmptyState, ListRow, Notice, Screen, SectionTitle, Split, Stack, StatCard } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, ListRow, Notice, Screen, SectionTitle, Split, Stack, StatCard, LoadError } from "@/components/ui";
 import { formatCurrency, formatDateTime } from "@/domain/format";
 import { describeHistoryEntry } from "@/domain/history";
 import { useAsyncResource } from "@/hooks/use-async-resource";
@@ -15,6 +15,8 @@ export default function DashboardScreen() {
   const router = useRouter();
   const runtime = useRuntime();
   const snapshot = useAsyncResource(() => SessionService.getDashboardSnapshot(), [runtime.dataVersion]);
+
+  if (snapshot.error && !snapshot.loading) return <LoadError error={snapshot.error} onRetry={snapshot.reload} />
 
   if (snapshot.loading || !snapshot.data) {
     return (
@@ -87,7 +89,7 @@ export default function DashboardScreen() {
                 <Button onPress={() => router.push(`/session/${openSession.id}`)}>Zum Abend</Button>
               </Stack>
             ) : (
-              <EmptyState>Aktuell ist kein Spielabend offen. Über „Spielabend öffnen“ legst du direkt den nächsten Abend an.</EmptyState>
+              <EmptyState>Aktuell ist kein Spielabend offen. Über „Neuen Spielabend starten“ legst du direkt den nächsten Abend an.</EmptyState>
             )}
           </Card>
 

@@ -29,7 +29,7 @@ export default function TabsLayout() {
             borderTopColor: colors.border,
             borderRightColor: colors.border,
             borderRightWidth: isTablet ? 1 : 0,
-            width: isTablet ? 88 : undefined,
+            width: isTablet ? 104 : undefined,
             height: isTablet ? undefined : 66,
           },
           tabBarPosition: isTablet ? "left" : "bottom",
