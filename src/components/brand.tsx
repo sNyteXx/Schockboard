@@ -1,24 +1,32 @@
-import { Text, View } from 'react-native'
+import { Image, Text, View } from 'react-native'
 
 import type { ThemeId } from '@/domain/types'
 import { colors, radius, spacing } from '@/theme/tokens'
 
-/**
- * A code-drawn BVB-inspired round emblem. No remotely loaded or bundled
- * third-party logo artwork is required to render it, including offline.
- */
+/** Official BVB crest from the Wikimedia Commons copy of bvb.de's logo. */
 export function BrandEmblem({ size = 72, themeId }: { size?: number; themeId: ThemeId }) {
   const isBvb = themeId === 'bvb09'
+
+  if (isBvb) {
+    return (
+      <Image
+        source={require('../../assets/bvb09-official.png')}
+        accessibilityLabel="Offizielles Borussia Dortmund BVB 09 Logo"
+        resizeMode="contain"
+        style={{ width: size, height: size }}
+      />
+    )
+  }
 
   return (
     <View
       accessible
-      accessibilityLabel={isBvb ? 'BVB 09 Emblem' : 'Schockboard Emblem'}
+      accessibilityLabel="Schockboard Emblem"
       style={{
         width: size,
         height: size,
         borderRadius: size / 2,
-        backgroundColor: isBvb ? '#FDE100' : colors.accent,
+        backgroundColor: colors.accent,
         borderWidth: Math.max(2, size * 0.05),
         borderColor: '#050705',
         alignItems: 'center',
@@ -43,15 +51,10 @@ export function BrandEmblem({ size = 72, themeId }: { size?: number; themeId: Th
       >
         <Text
           allowFontScaling={false}
-          style={{ color: '#090B09', fontWeight: '900', fontSize: size * (isBvb ? 0.25 : 0.34), letterSpacing: -size * 0.014, lineHeight: size * 0.28 }}
+          style={{ color: '#090B09', fontWeight: '900', fontSize: size * 0.34, letterSpacing: -size * 0.014, lineHeight: size * 0.35 }}
         >
-          {isBvb ? 'BVB' : '⚄'}
+          ⚄
         </Text>
-        {isBvb ? (
-          <Text allowFontScaling={false} style={{ color: '#090B09', fontWeight: '900', fontSize: size * 0.25, letterSpacing: -1, lineHeight: size * 0.25 }}>
-            09
-          </Text>
-        ) : null}
       </View>
     </View>
   )

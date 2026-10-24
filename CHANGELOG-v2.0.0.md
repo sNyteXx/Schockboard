@@ -2,7 +2,7 @@
 
 - Komplett überarbeitete Spielabend-Oberfläche mit Touch-Spielerkacheln, Live-Feed, Anwesenheit und Bierrunde
 - Adaptives Tablet-Layout, seitliche Navigation und Unterstützung für Hoch- und Querformat
-- BVB-09-Fan-Theme mit gezeichnetem Rundemblem, neuer Farbpalette und konsistenteren Komponenten
+- BVB-09-Fan-Theme mit originalem, lokal eingebundenem Vereinslogo, neuer Farbpalette und konsistenteren Komponenten
 - Storno-Fix: keine doppelte Schuldminderung mehr; Migration v6 korrigiert historisch falsch verbuchte automatische Storno-Korrekturen
 - Undo adressiert die exakte Buchung statt pauschal den letzten Posten eines Spielers
 - SQLite-Backup und -Wiederherstellung mit Schema-/Integritätsprüfung und Bestätigung
