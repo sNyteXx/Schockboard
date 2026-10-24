@@ -1,222 +1,226 @@
-import { useEffect, useState } from 'react'
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native'
-import Animated, { FadeIn, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated'
+import { useMemo, useState } from 'react'
+import { ScrollView, View } from 'react-native'
 
-import { BrandHero } from '@/components/brand'
-import { Badge, Card, EmptyState, Notice, Screen, SectionTitle, Split, Stack, LoadError } from '@/components/ui'
+import { PlayerAvatar } from '@/components/avatar'
+import { BarChart, LineChart, StackedBar, type BarDatum } from '@/components/charts'
+import {
+  AppText,
+  Badge,
+  Card,
+  CardHeader,
+  Chip,
+  EmptyState,
+  Grid,
+  KpiTile,
+  LoadError,
+  Screen,
+  ScreenHeader,
+  Segmented,
+  SkeletonScreen,
+  Split,
+  StatTile,
+  Stack,
+  type IconName,
+} from '@/components/ui'
+import { getSeasonLossSeries } from '@/db/chart-queries'
 import { getStatistics, type PlayerStats } from '@/db/stats-queries'
 import { formatCurrency, formatDate } from '@/domain/format'
 import { useAsyncResource } from '@/hooks/use-async-resource'
 import { useRuntime } from '@/providers/runtime-provider'
 import { Feedback } from '@/services/haptics'
-import { colors, radius, spacing } from '@/theme/tokens'
+import { colors, playerColor, spacing, withAlpha } from '@/theme/tokens'
 
 type Metric = 'lossCount' | 'lossCents' | 'averageLossCentsPerEvening' | 'eveningsAttended'
 
-const METRICS: Array<{ id: Metric; label: string; format: (row: PlayerStats) => string }> = [
-  { id: 'lossCount', label: 'Verluste', format: (row) => `${row.lossCount}` },
-  { id: 'lossCents', label: 'Betrag', format: (row) => formatCurrency(row.lossCents) },
-  { id: 'averageLossCentsPerEvening', label: 'Ø / Abend', format: (row) => formatCurrency(row.averageLossCentsPerEvening) },
-  { id: 'eveningsAttended', label: 'Abende', format: (row) => `${row.eveningsAttended}` },
+const METRICS: Array<{ value: Metric; label: string; format: (row: PlayerStats) => string }> = [
+  { value: 'lossCount', label: 'Verluste', format: (row) => `${row.lossCount}` },
+  { value: 'lossCents', label: 'Betrag', format: (row) => formatCurrency(row.lossCents) },
+  { value: 'averageLossCentsPerEvening', label: 'Ø Abend', format: (row) => formatCurrency(row.averageLossCentsPerEvening) },
+  { value: 'eveningsAttended', label: 'Abende', format: (row) => `${row.eveningsAttended}` },
 ]
+
+/** "24.10." – short x-axis label. */
+function shortDate(iso: string) {
+  const date = new Date(iso)
+  return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.`
+}
+
+/** Compact euro axis label: 1250 → "12,5 €", 2000 → "20 €". */
+function compactEuro(cents: number) {
+  const euros = cents / 100
+  return `${euros.toLocaleString('de-DE', { maximumFractionDigits: euros < 10 ? 1 : 0 })} €`
+}
 
 export default function StatsScreen() {
   const runtime = useRuntime()
   const [season, setSeason] = useState<string | null>(null)
   const [metric, setMetric] = useState<Metric>('lossCount')
-  const data = useAsyncResource(() => getStatistics(season), [runtime.dataVersion, season])
+  const data = useAsyncResource(
+    () => ({ ...getStatistics(season), timeline: getSeasonLossSeries(season, shortDate) }),
+    [runtime.dataVersion, season]
+  )
 
-  if (data.error && !data.loading) return <LoadError error={data.error} onRetry={data.reload} />
+  const derived = useMemo(() => {
+    if (!data.data) return null
+    const { stats, timeline } = data.data
+    const attendees = stats.players.filter((row) => row.eveningsAttended > 0)
+    const pick = (list: PlayerStats[], score: (row: PlayerStats) => number) => [...list].sort((left, right) => score(right) - score(left))[0]
+    const lineSeries = timeline.series.map((entry) => ({ id: entry.playerId, label: entry.playerName, color: playerColor(entry.playerId), points: entry.points }))
+    const attendance = [...stats.players].sort((left, right) => right.eveningsAttended - left.eveningsAttended || left.playerName.localeCompare(right.playerName, 'de'))
+    return {
+      lineSeries,
+      attendance,
+      records: {
+        pechvogel: pick(attendees, (row) => row.pechvogelCount),
+        lucky: pick(attendees, (row) => row.longestLuckyStreak),
+        loyal: [...stats.players].filter((row) => row.isCore).sort((left, right) => right.attendanceRate - left.attendanceRate || right.eveningsAttended - left.eveningsAttended)[0],
+        clean: pick(attendees, (row) => row.cleanEvenings),
+        beer: pick(stats.players, (row) => row.beerRoundCount),
+      },
+    }
+  }, [data.data])
 
-  if (data.loading && !data.data) {
-    return <Screen><ActivityIndicator color={colors.accentStrong} size="large" /></Screen>
+  const ranking = useMemo<BarDatum[]>(() => {
+    if (!data.data) return []
+    const metricDef = METRICS.find((item) => item.value === metric)!
+    return [...data.data.stats.players]
+      .sort((left, right) => right[metric] - left[metric] || left.playerName.localeCompare(right.playerName, 'de'))
+      .map((row) => ({
+        id: row.playerId,
+        label: row.playerName,
+        value: row[metric],
+        display: metricDef.format(row),
+        sublabel: [row.isCore ? null : 'Gast', row.pechvogelCount > 0 ? `${row.pechvogelCount}× Pechvogel` : null].filter(Boolean).join(' · ') || undefined,
+        avatar: { id: row.playerId, name: row.playerName },
+      }))
+  }, [data.data, metric])
+
+  if (data.error && !data.data) return <LoadError error={data.error} onRetry={data.reload} />
+  if (!data.data || !derived) return <SkeletonScreen variant="dashboard" />
+
+  const { stats, seasons, timeline } = data.data
+  const { records } = derived
+  const recordTiles: Array<{ key: string; label: string; value: string; hint: string; icon: IconName }> = []
+  if (records.pechvogel && records.pechvogel.pechvogelCount > 0) {
+    recordTiles.push({ key: 'pech', label: 'Dauer-Pechvogel', value: records.pechvogel.playerName, hint: `${records.pechvogel.pechvogelCount}× Pechvogel des Abends`, icon: 'sad-outline' })
   }
-
-  if (data.error || !data.data) {
-    return <Screen><Card><Notice type="error" message={data.error?.message ?? 'Statistik konnte nicht geladen werden.'} /></Card></Screen>
+  if (records.lucky && records.lucky.longestLuckyStreak > 0) {
+    recordTiles.push({ key: 'lucky', label: 'Glückssträhne', value: records.lucky.playerName, hint: `${records.lucky.longestLuckyStreak} Abende in Folge kein Pechvogel`, icon: 'leaf-outline' })
   }
-
-  const { stats, seasons } = data.data
-  const metricDef = METRICS.find((item) => item.id === metric)!
-  const ranked = [...stats.players].sort((left, right) => right[metric] - left[metric] || left.playerName.localeCompare(right.playerName, 'de'))
-  const maxValue = Math.max(1, ...ranked.map((row) => row[metric]))
-  const attendees = stats.players.filter((row) => row.eveningsAttended > 0)
-  const mostPechvogel = [...attendees].sort((left, right) => right.pechvogelCount - left.pechvogelCount)[0]
-  const luckiest = [...attendees].sort((left, right) => right.longestLuckyStreak - left.longestLuckyStreak)[0]
-  const loyal = [...stats.players].filter((row) => row.isCore).sort((left, right) => right.attendanceRate - left.attendanceRate || right.eveningsAttended - left.eveningsAttended)[0]
-  const cleanest = [...attendees].sort((left, right) => right.cleanEvenings - left.cleanEvenings)[0]
-  const beerKing = [...stats.players].sort((left, right) => right.beerRoundCount - left.beerRoundCount)[0]
+  if (records.clean && records.clean.cleanEvenings > 0) {
+    recordTiles.push({ key: 'clean', label: 'Weiße Weste', value: records.clean.playerName, hint: `${records.clean.cleanEvenings} Abende ohne Verlust`, icon: 'shield-checkmark-outline' })
+  }
+  if (records.loyal && records.loyal.eveningsAttended > 0) {
+    recordTiles.push({ key: 'loyal', label: 'Treueste Seele', value: records.loyal.playerName, hint: `${Math.round(records.loyal.attendanceRate * 100)} % der Abende dabei`, icon: 'heart-outline' })
+  }
+  if (records.beer && records.beer.beerRoundCount > 0) {
+    recordTiles.push({ key: 'beer', label: 'Spendierhosen', value: records.beer.playerName, hint: `${records.beer.beerRoundCount} Bierrunden · ${formatCurrency(records.beer.beerRoundCents)}`, icon: 'beer-outline' })
+  }
+  if (stats.wildestEvening) {
+    recordTiles.push({ key: 'wild', label: 'Wildester Abend', value: `${stats.wildestEvening.lossCount} Verluste`, hint: `${stats.wildestEvening.title} · ${formatDate(stats.wildestEvening.startedAt)}`, icon: 'flame-outline' })
+  }
 
   return (
     <Screen>
-      <Stack>
-        <BrandHero
-          themeId={runtime.themeId}
-          title="Statistik"
-          subtitle={season ? `Saison ${season} · ${stats.eveningCount} abgeschlossene Abende` : `Alle Saisons · ${stats.eveningCount} abgeschlossene Abende`}
-        />
+      <ScreenHeader
+        title="Statistik"
+        context={`${season ? `Saison ${season}` : 'Alle Saisons'} · ${stats.eveningCount} ${stats.eveningCount === 1 ? 'abgeschlossener Abend' : 'abgeschlossene Abende'}`}
+      />
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.xs }}>
-          <FilterChip label="Gesamt" selected={season === null} onPress={() => setSeason(null)} />
-          {seasons.map((item) => (
-            <FilterChip key={item} label={`Saison ${item}`} selected={season === item} onPress={() => setSeason(item)} />
-          ))}
-        </ScrollView>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.xs }}>
+        <Chip label="Gesamt" icon="infinite-outline" selected={season === null} onPress={() => { if (season !== null) { Feedback.tap(); setSeason(null) } }} />
+        {seasons.map((item) => (
+          <Chip key={item} label={`Saison ${item}`} selected={season === item} onPress={() => { if (season !== item) { Feedback.tap(); setSeason(item) } }} />
+        ))}
+      </ScrollView>
 
-        {stats.eveningCount === 0 ? (
+      {stats.eveningCount === 0 ? (
+        <Card>
+          <EmptyState icon="stats-chart-outline" title="Noch keine Statistik">
+            {`Noch keine abgeschlossenen Spielabende${season ? ` in ${season}` : ''}. Sobald ein Abend abgeschlossen ist, erscheinen hier Rangliste, Verlauf und Rekorde.`}
+          </EmptyState>
+        </Card>
+      ) : (
+        <>
+          <Grid columns={{ compact: 2, medium: 4, expanded: 4 }}>
+            <KpiTile label="Abende" icon="calendar-outline" value={stats.eveningCount} format={(value) => `${value}`} hint="abgeschlossen" />
+            <KpiTile label="Verluste" icon="remove-circle-outline" value={stats.totalLossCount} format={(value) => `${value}`} hint={`Ø ${(stats.totalLossCount / Math.max(1, stats.eveningCount)).toLocaleString('de-DE', { maximumFractionDigits: 1 })} pro Abend`} />
+            <KpiTile label="Verloren" icon="cash-outline" tone="hero" value={stats.totalLossCents} format={formatCurrency} hint={`+ ${formatCurrency(stats.totalAbsenceCents)} Abwesenheit`} />
+            <KpiTile label="Bierrunden" icon="beer-outline" value={stats.totalBeerRoundCount} format={(value) => `${value}`} hint={formatCurrency(stats.totalBeerRoundCents)} />
+          </Grid>
+
           <Card>
-            <EmptyState>Noch keine abgeschlossenen Spielabende{season ? ` in ${season}` : ''}. Sobald ein Abend abgeschlossen ist, erscheint hier die Rangliste.</EmptyState>
+            <CardHeader overline="Verlauf" title="Verluste kumuliert" icon="trending-up" aside={<Badge>{`${timeline.labels.length} Abende`}</Badge>} />
+            {derived.lineSeries.length > 0 ? (
+              <LineChart series={derived.lineSeries} labels={timeline.labels} height={220} formatY={compactEuro} legend area={derived.lineSeries.length === 1} />
+            ) : (
+              <EmptyState icon="trending-up">In diesem Zeitraum wurde noch nichts verloren.</EmptyState>
+            )}
           </Card>
-        ) : (
-          <>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
-              <Kpi label="ABENDE" value={`${stats.eveningCount}`} />
-              <Kpi label="VERLUSTE" value={`${stats.totalLossCount}`} />
-              <Kpi label="VERLOREN" value={formatCurrency(stats.totalLossCents)} />
-              <Kpi label="BIERRUNDEN" value={`${stats.totalBeerRoundCount}`} />
-            </View>
 
+          <Split weights={[7, 5]}>
             <Card>
-              <SectionTitle eyebrow="Rangliste" title={season ? `Saison ${season}` : 'Ewige Tabelle'} aside={<Badge>{ranked.length} Spieler</Badge>} />
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
-                {METRICS.map((item) => (
-                  <FilterChip key={item.id} label={item.label} selected={metric === item.id} onPress={() => setMetric(item.id)} />
-                ))}
-              </View>
-              <Stack>
-                {ranked.map((row, index) => (
-                  <RankRow
-                    key={`${row.playerId}-${metric}-${season ?? 'all'}`}
-                    rank={index + 1}
-                    row={row}
-                    value={metricDef.format(row)}
-                    ratio={row[metric] / maxValue}
-                    delay={Math.min(index, 10) * 40}
-                  />
-                ))}
-              </Stack>
+              <CardHeader overline="Rangliste" title={season ? `Saison ${season}` : 'Ewige Tabelle'} icon="trophy-outline" aside={<Badge>{`${ranking.length} Spieler`}</Badge>} />
+              <Segmented options={METRICS.map(({ value, label }) => ({ value, label }))} value={metric} onChange={(value) => { Feedback.tap(); setMetric(value) }} />
+              <BarChart key={`${metric}-${season ?? 'all'}`} data={ranking} showRank barHeight={8} />
             </Card>
 
-            <Split>
-              <Card>
-                <SectionTitle eyebrow="Fun Facts" title="Rekorde" />
-                <Stack>
-                  {mostPechvogel && mostPechvogel.pechvogelCount > 0 ? (
-                    <Fact icon="🐦" title="Dauer-Pechvogel" detail={`${mostPechvogel.playerName} – ${mostPechvogel.pechvogelCount}× Pechvogel des Abends`} />
-                  ) : null}
-                  {luckiest && luckiest.longestLuckyStreak > 0 ? (
-                    <Fact icon="🍀" title="Längste Glückssträhne" detail={`${luckiest.playerName} – ${luckiest.longestLuckyStreak} Abende in Folge kein Pechvogel`} />
-                  ) : null}
-                  {cleanest && cleanest.cleanEvenings > 0 ? (
-                    <Fact icon="🧼" title="Weiße Weste" detail={`${cleanest.playerName} – ${cleanest.cleanEvenings} Abende ohne einen Verlust`} />
-                  ) : null}
-                  {loyal && loyal.eveningsAttended > 0 ? (
-                    <Fact icon="🏟️" title="Treueste Seele" detail={`${loyal.playerName} – ${Math.round(loyal.attendanceRate * 100)} % der Abende dabei`} />
-                  ) : null}
-                  {beerKing && beerKing.beerRoundCount > 0 ? (
-                    <Fact icon="🍺" title="Spendierhosen" detail={`${beerKing.playerName} – ${beerKing.beerRoundCount} Bierrunden (${formatCurrency(beerKing.beerRoundCents)})`} />
-                  ) : null}
-                  {stats.wildestEvening ? (
-                    <Fact icon="🔥" title="Wildester Abend" detail={`${stats.wildestEvening.title} (${formatDate(stats.wildestEvening.startedAt)}) – ${stats.wildestEvening.lossCount} Verluste`} />
-                  ) : null}
-                </Stack>
-              </Card>
+            <Stack>
+              {recordTiles.length ? (
+                <Card>
+                  <CardHeader overline="Fun Facts" title="Rekorde" icon="ribbon-outline" />
+                  <Grid columns={{ compact: 2, medium: 2, expanded: 2 }}>
+                    {recordTiles.map((tile) => (
+                      <StatTile key={tile.key} label={tile.label} value={tile.value} hint={tile.hint} icon={tile.icon} tone={tile.key === 'pech' || tile.key === 'wild' ? 'warning' : 'accent'} />
+                    ))}
+                  </Grid>
+                </Card>
+              ) : null}
 
               <Card>
-                <SectionTitle eyebrow="Anwesenheit" title="Abende pro Spieler" />
-                <Stack>
-                  {[...stats.players].sort((left, right) => right.eveningsAttended - left.eveningsAttended || left.playerName.localeCompare(right.playerName, 'de')).map((row) => (
-                    <View key={row.playerId} style={{ gap: 6 }}>
-                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm }}>
-                        <Text style={{ color: colors.text, fontWeight: '800', flex: 1 }} numberOfLines={1}>{row.playerName}{row.isCore ? '' : ' (Gast)'}</Text>
-                        <Text style={{ color: colors.muted, fontSize: 13 }}>
-                          {row.eveningsAttended} da{row.isCore ? ` · ${row.eveningsMissed} gefehlt` : ''} · Ø {row.averageLossesPerEvening.toLocaleString('de-DE')} Verl.
-                        </Text>
+                <CardHeader overline="Anwesenheit" title="Abende pro Spieler" icon="people-outline" />
+                <Stack gap={spacing.sm}>
+                  {derived.attendance.map((row) => (
+                    <View key={row.playerId} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                      <PlayerAvatar id={row.playerId} name={row.playerName} size={28} />
+                      <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: spacing.xs }}>
+                          <AppText variant="label" numberOfLines={1} style={{ flexShrink: 1 }}>{row.playerName}</AppText>
+                          <View style={{ flex: 1 }} />
+                          <AppText variant="caption" tone="muted">
+                            {`${row.eveningsAttended} da${row.isCore ? ` · ${row.eveningsMissed} gefehlt` : ' · Gast'} · Ø ${row.averageLossesPerEvening.toLocaleString('de-DE')}`}
+                          </AppText>
+                        </View>
+                        <StackedBar
+                          total={stats.eveningCount}
+                          height={6}
+                          segments={[
+                            { key: 'attended', value: row.eveningsAttended, color: colors.success },
+                            { key: 'missed', value: row.eveningsMissed, color: withAlpha(colors.danger, 0.6) },
+                          ]}
+                        />
                       </View>
-                      <StackedBar attended={row.eveningsAttended} missed={row.eveningsMissed} total={stats.eveningCount} />
                     </View>
                   ))}
                 </Stack>
+                <View style={{ flexDirection: 'row', gap: spacing.md }}>
+                  <LegendDot color={colors.success} label="anwesend" />
+                  <LegendDot color={withAlpha(colors.danger, 0.6)} label="gefehlt" />
+                </View>
               </Card>
-            </Split>
-          </>
-        )}
-      </Stack>
+            </Stack>
+          </Split>
+        </>
+      )}
     </Screen>
   )
 }
 
-function FilterChip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+function LegendDot({ color, label }: { color: string; label: string }) {
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ selected }}
-      onPress={() => { if (!selected) { Feedback.tap(); onPress() } }}
-      style={({ pressed }) => ({
-        paddingHorizontal: spacing.md,
-        paddingVertical: 9,
-        borderRadius: radius.pill,
-        backgroundColor: selected ? colors.accent : colors.surfaceSoft,
-        borderWidth: 1,
-        borderColor: selected ? colors.accent : colors.border,
-        opacity: pressed ? 0.75 : 1,
-      })}
-    >
-      <Text style={{ color: selected ? colors.buttonPrimaryText : colors.text, fontWeight: '800', fontSize: 13 }}>{label}</Text>
-    </Pressable>
-  )
-}
-
-function Kpi({ label, value }: { label: string; value: string }) {
-  return (
-    <View style={{ flex: 1, minWidth: 120, padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.bgElevated, borderWidth: 1, borderColor: colors.border, gap: 4 }}>
-      <Text style={{ color: colors.muted, fontSize: 10, fontWeight: '900', letterSpacing: 1.2 }}>{label}</Text>
-      <Text style={{ color: colors.text, fontSize: 22, fontWeight: '900' }} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
-    </View>
-  )
-}
-
-function RankRow({ rank, row, value, ratio, delay }: { rank: number; row: PlayerStats; value: string; ratio: number; delay: number }) {
-  const progress = useSharedValue(0)
-  useEffect(() => {
-    progress.value = withDelay(delay, withTiming(ratio, { duration: 520 }))
-  }, [delay, progress, ratio])
-  const barStyle = useAnimatedStyle(() => ({ width: `${Math.max(progress.value * 100, 1.5)}%` }))
-
-  return (
-    <Animated.View entering={FadeIn.duration(200)} style={{ gap: 6 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-        <Text style={{ width: 26, color: rank <= 3 ? colors.accentStrong : colors.muted, fontWeight: '900' }}>{rank}.</Text>
-        <Text style={{ flex: 1, color: colors.text, fontWeight: '800' }} numberOfLines={1}>
-          {row.playerName}{row.pechvogelCount > 0 ? ` · 🐦 ${row.pechvogelCount}` : ''}
-        </Text>
-        <Text style={{ color: colors.text, fontWeight: '900', fontVariant: ['tabular-nums'] }}>{value}</Text>
-      </View>
-      <View style={{ height: 10, borderRadius: 5, backgroundColor: colors.surfaceSoft, overflow: 'hidden', marginLeft: 26 + spacing.sm }}>
-        <Animated.View style={[{ height: 10, borderRadius: 5, backgroundColor: rank === 1 ? colors.accentStrong : colors.accent }, barStyle]} />
-      </View>
-    </Animated.View>
-  )
-}
-
-function StackedBar({ attended, missed, total }: { attended: number; missed: number; total: number }) {
-  const safeTotal = Math.max(1, total)
-  return (
-    <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.surfaceSoft, overflow: 'hidden', flexDirection: 'row' }}>
-      <View style={{ width: `${(attended / safeTotal) * 100}%`, backgroundColor: colors.success }} />
-      <View style={{ width: `${(missed / safeTotal) * 100}%`, backgroundColor: colors.danger, opacity: 0.7 }} />
-    </View>
-  )
-}
-
-function Fact({ icon, title, detail }: { icon: string; title: string; detail: string }) {
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-      <Text style={{ fontSize: 26 }}>{icon}</Text>
-      <View style={{ flex: 1, gap: 2 }}>
-        <Text style={{ color: colors.text, fontWeight: '900' }}>{title}</Text>
-        <Text style={{ color: colors.muted, lineHeight: 19 }}>{detail}</Text>
-      </View>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
+      <AppText variant="caption" tone="subtle">{label}</AppText>
     </View>
   )
 }

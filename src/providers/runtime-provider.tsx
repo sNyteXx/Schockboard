@@ -7,7 +7,9 @@ import { AuthService } from '@/services/auth-service'
 import { SessionService } from '@/services/session-service'
 import { UndoService } from '@/services/undo-service'
 import { colors, setActiveTheme, spacing } from '@/theme/tokens'
+import { BrandEmblem } from '@/components/brand'
 import { UndoToast } from '@/components/undo-toast'
+import { getTypeScale } from '@/theme/typography'
 import { useRemoteSync } from '@/remote/use-remote-sync'
 
 type RuntimeContextValue = {
@@ -144,9 +146,11 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
 
   if (!ready) {
     return (
-      <SafeAreaView style={styles.loadingScreen}>
-        <ActivityIndicator color={colors.accentStrong} size="large" />
-        <Text style={styles.loadingText}>Schockboard wird gestartet…</Text>
+      <SafeAreaView style={[styles.loadingScreen, { backgroundColor: colors.bg }]}>
+        <BrandEmblem size={56} themeId={themeId} />
+        <Text style={[styles.loadingTitle, { color: colors.text }]}>Schockboard</Text>
+        <ActivityIndicator color={colors.accent} size="small" />
+        <Text style={[styles.loadingText, { color: colors.muted }]}>Wird gestartet …</Text>
       </SafeAreaView>
     )
   }
@@ -186,11 +190,8 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.md,
-    backgroundColor: colors.bg,
+    gap: spacing.sm,
   },
-  loadingText: {
-    color: colors.text,
-    fontSize: 16,
-  },
+  loadingTitle: { ...getTypeScale(1).title, marginBottom: spacing.xs },
+  loadingText: getTypeScale(1).caption,
 })

@@ -1,9 +1,10 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
-import { Pressable, Text, View } from 'react-native'
-import Animated, { LinearTransition } from 'react-native-reanimated'
+import { Text, View } from 'react-native'
 
+import { PressableScale } from '@/components/motion'
 import { Feedback } from '@/services/haptics'
 import { colors, radius, spacing } from '@/theme/tokens'
+import { themedStyles } from '@/theme/use-theme'
 
 export type EveningStep = 'attendance' | 'live' | 'summary'
 
@@ -15,75 +16,63 @@ export const EVENING_STEPS: Array<{ id: EveningStep; label: string; icon: IconNa
   { id: 'summary', label: 'Abschluss', icon: 'flag' },
 ]
 
+const useStyles = themedStyles(({ c, t }) => ({
+  track: {
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+    borderRadius: radius.md,
+    backgroundColor: c.bgElevated,
+    borderWidth: 1,
+    borderColor: c.border,
+  },
+  step: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.xs,
+    borderRadius: radius.sm,
+  },
+  stepActive: { backgroundColor: c.accentSoft, borderWidth: 1, borderColor: c.accent },
+  label: { ...t.label, color: c.muted, flexShrink: 1 },
+  labelActive: { color: c.text },
+  labelDone: { color: c.text },
+}))
+
 /** Compact, tappable 3-step indicator for the evening assistant. */
 export function StepIndicator({ step, onChange }: { step: EveningStep; onChange: (step: EveningStep) => void }) {
+  const styles = useStyles()
   const activeIndex = EVENING_STEPS.findIndex((item) => item.id === step)
 
   return (
-    <View
-      accessibilityRole="tablist"
-      style={{
-        flexDirection: 'row',
-        gap: 6,
-        padding: 5,
-        borderRadius: radius.pill,
-        backgroundColor: colors.bgElevated,
-        borderWidth: 1,
-        borderColor: colors.border,
-      }}
-    >
+    <View accessibilityRole="tablist" style={styles.track}>
       {EVENING_STEPS.map((item, index) => {
         const active = index === activeIndex
         const done = index < activeIndex
+        const iconName = (done ? 'checkmark-circle' : active ? item.icon : `${item.icon}-outline`) as IconName
         return (
-          <Animated.View key={item.id} layout={LinearTransition.springify().damping(18)} style={{ flex: active ? 1.6 : 1, minWidth: 0 }}>
-            <Pressable
-              accessibilityRole="tab"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={`Schritt ${index + 1}: ${item.label}`}
-              onPress={() => {
-                if (active) return
-                Feedback.tap()
-                onChange(item.id)
-              }}
-              style={({ pressed }) => ({
-                minHeight: 40,
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 6,
-                paddingHorizontal: spacing.xs,
-                borderRadius: radius.pill,
-                backgroundColor: active ? colors.accent : 'transparent',
-                opacity: pressed ? 0.7 : 1,
-              })}
-            >
-              <View
-                style={{
-                  width: 20,
-                  height: 20,
-                  borderRadius: 10,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: active ? colors.buttonPrimaryText : done ? colors.surfaceSoft : 'transparent',
-                  borderWidth: active || done ? 0 : 1,
-                  borderColor: colors.border,
-                }}
-              >
-                {done ? (
-                  <Ionicons name="checkmark" size={13} color={colors.accentStrong} />
-                ) : (
-                  <Text style={{ color: active ? colors.accent : colors.muted, fontSize: 11, fontWeight: '900' }}>{index + 1}</Text>
-                )}
-              </View>
-              <Text
-                numberOfLines={1}
-                style={{ color: active ? colors.buttonPrimaryText : done ? colors.text : colors.muted, fontWeight: '900', fontSize: 13, flexShrink: 1 }}
-              >
-                {item.label}
-              </Text>
-            </Pressable>
-          </Animated.View>
+          <PressableScale
+            key={item.id}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={`Schritt ${index + 1}: ${item.label}`}
+            pressedScale={0.96}
+            onPress={() => {
+              if (active) return
+              Feedback.tap()
+              onChange(item.id)
+            }}
+            style={[styles.step, active && styles.stepActive]}
+          >
+            <Ionicons name={iconName} size={17} color={active ? colors.accentStrong : done ? colors.success : colors.subtle} />
+            <Text numberOfLines={1} style={[styles.label, active && styles.labelActive, done && styles.labelDone]}>
+              {item.label}
+            </Text>
+          </PressableScale>
         )
       })}
     </View>

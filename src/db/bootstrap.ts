@@ -273,6 +273,16 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 8,
+    name: 'bvb09_default_theme',
+    sql: `
+      -- BVB 09 is the house look. Databases from older builds got 'original'
+      -- as a column default without anyone choosing it; switch them once.
+      -- A later choice in Setup is kept (this runs only once).
+      UPDATE app_settings SET theme_id = 'bvb09' WHERE theme_id = 'original';
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version

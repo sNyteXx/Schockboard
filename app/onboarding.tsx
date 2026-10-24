@@ -1,19 +1,24 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { useRouter } from 'expo-router'
 import { useMemo, useRef, useState } from 'react'
-import { Pressable, Text, TextInput, View } from 'react-native'
-import Animated, { FadeIn, FadeInRight, LinearTransition } from 'react-native-reanimated'
+import { Pressable, TextInput, View } from 'react-native'
+import Animated, { FadeIn, FadeInRight, LinearTransition, ReduceMotion } from 'react-native-reanimated'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
+import { PlayerAvatar } from '@/components/avatar'
 import { BrandEmblem } from '@/components/brand'
-import { Button, Card, Field, Input, Notice, Screen, SectionTitle, Split, Stack } from '@/components/ui'
+import { PressableScale } from '@/components/motion'
+import { AppText, Button, Card, CardHeader, Chip, Field, Grid, IconButton, Input, Notice, Screen, ScreenHeader, Stack } from '@/components/ui'
 import { formatCurrency } from '@/domain/format'
 import type { AbsencePenaltyMode, ThemeId } from '@/domain/types'
 import { parseEuroToCents } from '@/domain/utils'
+import { useDeviceLayout } from '@/hooks/use-device-layout'
 import { markOnboardingSkipped } from '@/hooks/use-onboarding'
 import { useRuntime } from '@/providers/runtime-provider'
 import { Feedback } from '@/services/haptics'
 import { SessionService } from '@/services/session-service'
 import { THEMES, colors, radius, spacing } from '@/theme/tokens'
+import { useTheme } from '@/theme/use-theme'
 
 type OnboardingStep = 'players' | 'stake' | 'absence' | 'theme'
 const STEPS: Array<{ id: OnboardingStep; label: string }> = [
@@ -51,6 +56,9 @@ export default function OnboardingScreen() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const inputRef = useRef<TextInput>(null)
+  const insets = useSafeAreaInsets()
+  const { pagePadding, isTablet } = useDeviceLayout()
+  const { t } = useTheme()
 
   const index = STEPS.findIndex((item) => item.id === step)
   const isLast = index === STEPS.length - 1
@@ -148,49 +156,79 @@ export default function OnboardingScreen() {
     else router.replace('/(tabs)')
   }
 
+  const footer = (
+    <View
+      style={{
+        flexDirection: 'row',
+        gap: spacing.xs,
+        paddingHorizontal: pagePadding,
+        paddingTop: spacing.sm,
+        paddingBottom: isTablet ? spacing.sm : Math.max(insets.bottom, spacing.sm),
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+        backgroundColor: colors.tabBar,
+      }}
+    >
+      <View style={{ flex: 1, maxWidth: 360 }}>
+        {index > 0 ? (
+          <Button tone="secondary" icon="arrow-back" onPress={() => setStep(STEPS[index - 1].id)}>Zurück</Button>
+        ) : (
+          <Button tone="secondary" onPress={skip}>Später einrichten</Button>
+        )}
+      </View>
+      <View style={{ flex: 1.4 }}>
+        <Button
+          onPress={next}
+          disabled={!actor}
+          loading={saving}
+          iconRight={isLast ? 'checkmark' : 'arrow-forward'}
+        >
+          {isLast ? "Fertig – los geht's" : 'Weiter'}
+        </Button>
+      </View>
+    </View>
+  )
+
   return (
-    <Screen>
-      <Stack>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
-          <BrandEmblem size={56} themeId={runtime.themeId} />
-          <View style={{ flex: 1, gap: 2 }}>
-            <Text style={{ color: colors.accentStrong, fontSize: 11, fontWeight: '900', letterSpacing: 2.2 }}>WILLKOMMEN BEIM SCHOCKBOARD</Text>
-            <Text style={{ color: colors.text, fontSize: 26, fontWeight: '900', letterSpacing: -0.6 }}>In vier Schritten startklar</Text>
-          </View>
-          <Pressable accessibilityRole="button" onPress={skip} hitSlop={10} style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1, padding: spacing.xs })}>
-            <Text style={{ color: colors.muted, fontWeight: '800' }}>Überspringen</Text>
+    <Screen maxWidth={880} footer={footer}>
+      <ScreenHeader
+        leading={<BrandEmblem size={40} themeId={runtime.themeId} />}
+        title="Willkommen"
+        context={`In vier Schritten startklar · Schritt ${index + 1} von ${STEPS.length}`}
+        actions={<Button tone="ghost" size="sm" onPress={skip}>Überspringen</Button>}
+      />
+
+      <View style={{ flexDirection: 'row', gap: 6 }}>
+        {STEPS.map((item, itemIndex) => (
+          <Pressable
+            key={item.id}
+            accessibilityRole="button"
+            accessibilityLabel={`Schritt ${itemIndex + 1}: ${item.label}`}
+            accessibilityState={{ selected: itemIndex === index, disabled: itemIndex >= index }}
+            onPress={() => { if (itemIndex < index) setStep(item.id) }}
+            style={{ flex: 1, gap: 6 }}
+          >
+            <Animated.View
+              layout={LinearTransition.duration(200)}
+              style={{ height: 4, borderRadius: radius.pill, backgroundColor: itemIndex <= index ? colors.accent : colors.surfaceSoft }}
+            />
+            <AppText variant="caption" tone={itemIndex === index ? 'default' : 'subtle'} numberOfLines={1}>{item.label}</AppText>
           </Pressable>
-        </View>
+        ))}
+      </View>
 
-        <View style={{ flexDirection: 'row', gap: 6 }}>
-          {STEPS.map((item, itemIndex) => (
-            <Pressable
-              key={item.id}
-              accessibilityRole="button"
-              accessibilityLabel={`Schritt ${itemIndex + 1}: ${item.label}`}
-              onPress={() => { if (itemIndex < index) setStep(item.id) }}
-              style={{ flex: 1, gap: 6 }}
-            >
-              <Animated.View
-                layout={LinearTransition}
-                style={{ height: 5, borderRadius: 3, backgroundColor: itemIndex <= index ? colors.accent : colors.surfaceSoft }}
-              />
-              <Text style={{ color: itemIndex === index ? colors.text : colors.muted, fontSize: 11, fontWeight: '800' }} numberOfLines={1}>{item.label}</Text>
-            </Pressable>
-          ))}
-        </View>
+      {error ? <Notice type="error" message={error} /> : null}
 
-        {error ? <Notice type="error" message={error} /> : null}
-
-        <Animated.View key={step} entering={FadeInRight.duration(240)}>
-          {step === 'players' ? (
-            <Card>
-              <SectionTitle eyebrow="Schritt 1" title="Wer gehört zur Stammrunde?" />
-              <Text style={{ color: colors.muted, lineHeight: 21 }}>
-                Stammspieler werden bei jedem neuen Abend automatisch geladen. Gäste kannst du später spontan hinzufügen.
-              </Text>
-              <Field label="Name (mehrere mit Komma trennen)">
-                <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+      <Animated.View key={step} entering={FadeInRight.duration(240).reduceMotion(ReduceMotion.System)}>
+        {step === 'players' ? (
+          <Card>
+            <CardHeader overline="Schritt 1" title="Wer gehört zur Stammrunde?" icon="people-outline" />
+            <AppText tone="muted">
+              Stammspieler werden bei jedem neuen Abend automatisch geladen. Gäste kannst du später spontan hinzufügen.
+            </AppText>
+            <Field label="Name (mehrere mit Komma trennen)">
+              <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+                <View style={{ flex: 1 }}>
                   <Input
                     ref={inputRef}
                     value={nameInput}
@@ -199,169 +237,129 @@ export default function OnboardingScreen() {
                     returnKeyType="next"
                     blurOnSubmit={false}
                     onSubmitEditing={addNames}
-                    style={{ flex: 1 }}
                   />
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Spieler hinzufügen"
-                    disabled={!nameInput.trim()}
-                    onPress={addNames}
-                    style={({ pressed }) => ({
-                      width: 52, borderRadius: radius.sm, backgroundColor: colors.accent,
-                      alignItems: 'center', justifyContent: 'center', opacity: !nameInput.trim() ? 0.4 : pressed ? 0.75 : 1,
-                    })}
-                  >
-                    <Ionicons name="add" size={26} color={colors.buttonPrimaryText} />
-                  </Pressable>
                 </View>
-              </Field>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
-                {existingCore.map((name) => (
-                  <View key={`existing-${name}`} style={{ borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 8, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border }}>
-                    <Text style={{ color: colors.muted, fontWeight: '700' }}>✓ {name}</Text>
-                  </View>
-                ))}
-                {names.map((name) => (
-                  <Animated.View key={name} entering={FadeIn.duration(180)}>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`${name} entfernen`}
-                      onPress={() => setNames((previous) => previous.filter((item) => item !== name))}
-                      style={({ pressed }) => ({
-                        flexDirection: 'row', alignItems: 'center', gap: 6,
-                        borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 8,
-                        backgroundColor: colors.surfaceSoft, borderWidth: 1, borderColor: colors.accent, opacity: pressed ? 0.6 : 1,
-                      })}
-                    >
-                      <Text style={{ color: colors.text, fontWeight: '800' }}>{name}</Text>
-                      <Ionicons name="close" size={14} color={colors.muted} />
-                    </Pressable>
-                  </Animated.View>
-                ))}
+                <IconButton icon="add" tone="primary" size={48} accessibilityLabel="Spieler hinzufügen" disabled={!nameInput.trim()} onPress={addNames} />
               </View>
-              {names.length + existingCore.length === 0 ? (
-                <Text style={{ color: colors.muted, fontSize: 13 }}>Du kannst Spieler auch später unter „Setup“ anlegen.</Text>
-              ) : null}
-            </Card>
-          ) : null}
-
-          {step === 'stake' ? (
-            <Card>
-              <SectionTitle eyebrow="Schritt 2" title="Standard-Einsatz" />
-              <Text style={{ color: colors.muted, lineHeight: 21 }}>So viel kostet ein verlorenes Spiel. Pro Abend lässt sich der Einsatz anpassen.</Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
-                <StepButton label="−" onPress={() => adjustStake(-50)} />
-                <Input value={stake} onChangeText={setStake} keyboardType="decimal-pad" style={{ flex: 1, textAlign: 'center', fontSize: 24, fontWeight: '900' }} />
-                <StepButton label="＋" onPress={() => adjustStake(50)} />
-              </View>
-              <View style={{ flexDirection: 'row', gap: spacing.xs, flexWrap: 'wrap' }}>
-                {[50, 100, 200].map((cents) => (
-                  <Pressable
-                    key={cents}
-                    onPress={() => setStake(centsToInput(cents))}
-                    style={({ pressed }) => ({ paddingHorizontal: spacing.md, paddingVertical: 10, borderRadius: radius.pill, backgroundColor: colors.surfaceSoft, borderWidth: 1, borderColor: colors.border, opacity: pressed ? 0.7 : 1 })}
+            </Field>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
+              {existingCore.map((name) => (
+                <Chip key={`existing-${name}`} label={name} icon="checkmark" disabled leading={<PlayerAvatar id={name} name={name} size={30} />} />
+              ))}
+              {names.map((name) => (
+                <Animated.View key={name} entering={FadeIn.duration(180).reduceMotion(ReduceMotion.System)}>
+                  <PressableScale
+                    accessibilityRole="button"
+                    accessibilityLabel={`${name} entfernen`}
+                    onPress={() => setNames((previous) => previous.filter((item) => item !== name))}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 40,
+                      borderRadius: radius.pill, paddingLeft: 4, paddingRight: spacing.sm,
+                      backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent,
+                    }}
                   >
-                    <Text style={{ color: colors.text, fontWeight: '800' }}>{formatCurrency(cents)}</Text>
-                  </Pressable>
-                ))}
+                    <PlayerAvatar id={name} name={name} size={30} />
+                    <AppText variant="label">{name}</AppText>
+                    <Ionicons name="close" size={14} color={colors.muted} />
+                  </PressableScale>
+                </Animated.View>
+              ))}
+            </View>
+            {names.length + existingCore.length === 0 ? (
+              <AppText variant="caption" tone="subtle">Du kannst Spieler auch später unter „Setup“ anlegen.</AppText>
+            ) : null}
+          </Card>
+        ) : null}
+
+        {step === 'stake' ? (
+          <Card>
+            <CardHeader overline="Schritt 2" title="Standard-Einsatz" icon="cash-outline" />
+            <AppText tone="muted">So viel kostet ein verlorenes Spiel. Pro Abend lässt sich der Einsatz anpassen.</AppText>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, alignSelf: 'center', width: '100%', maxWidth: 420 }}>
+              <IconButton icon="remove" size={56} accessibilityLabel="Einsatz verringern" onPress={() => adjustStake(-50)} />
+              <View style={{ flex: 1 }}>
+                <Input value={stake} onChangeText={setStake} keyboardType="decimal-pad" style={[t.numericLg, { textAlign: 'center', minHeight: 64 }]} />
               </View>
-            </Card>
-          ) : null}
+              <IconButton icon="add" size={56} accessibilityLabel="Einsatz erhöhen" onPress={() => adjustStake(50)} />
+            </View>
+            <View style={{ flexDirection: 'row', gap: spacing.xs, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {[50, 100, 200].map((cents) => (
+                <Chip key={cents} label={formatCurrency(cents)} selected={stake === centsToInput(cents)} onPress={() => { Feedback.tap(); setStake(centsToInput(cents)) }} />
+              ))}
+            </View>
+          </Card>
+        ) : null}
 
-          {step === 'absence' ? (
-            <Card>
-              <SectionTitle eyebrow="Schritt 3" title="Wer fehlt, zahlt?" />
-              <Text style={{ color: colors.muted, lineHeight: 21 }}>Beim Abschluss eines Abends werden abwesende Stammspieler nach dieser Regel belastet.</Text>
-              <Stack>
-                {ABSENCE_OPTIONS.map((option) => (
-                  <OptionCard key={option.id} selected={mode === option.id} title={option.title} description={option.description} onPress={() => { Feedback.tap(); setMode(option.id) }} />
-                ))}
-              </Stack>
-            </Card>
-          ) : null}
+        {step === 'absence' ? (
+          <Card>
+            <CardHeader overline="Schritt 3" title="Wer fehlt, zahlt?" icon="person-remove-outline" />
+            <AppText tone="muted">Beim Abschluss eines Abends werden abwesende Stammspieler nach dieser Regel belastet.</AppText>
+            <Stack gap={spacing.xs}>
+              {ABSENCE_OPTIONS.map((option) => (
+                <OptionCard key={option.id} selected={mode === option.id} title={option.title} description={option.description} onPress={() => { Feedback.tap(); setMode(option.id) }} />
+              ))}
+            </Stack>
+          </Card>
+        ) : null}
 
-          {step === 'theme' ? (
-            <Card>
-              <SectionTitle eyebrow="Schritt 4" title="Euer Look" />
-              <Split>
-                {THEME_ORDER.map((themeId) => {
-                  const theme = THEMES[themeId]
-                  const selected = runtime.themeId === themeId
-                  return (
-                    <Pressable
-                      key={themeId}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      onPress={() => { Feedback.tap(); runtime.setTheme(themeId) }}
-                      style={({ pressed }) => ({
-                        borderRadius: radius.md, padding: spacing.md, gap: spacing.sm,
-                        backgroundColor: theme.bgElevated, borderWidth: 2, borderColor: selected ? theme.accent : theme.border,
-                        opacity: pressed ? 0.8 : 1,
-                      })}
-                    >
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        {[theme.bg, theme.surface, theme.accent, theme.text].map((swatch, swatchIndex) => (
-                          <View key={swatchIndex} style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: swatch, borderWidth: 1, borderColor: theme.border }} />
-                        ))}
-                      </View>
-                      <Text style={{ color: theme.text, fontWeight: '900', fontSize: 16 }}>{theme.label}</Text>
-                      {selected ? <Text style={{ color: theme.accentStrong, fontWeight: '800', fontSize: 12 }}>✓ AUSGEWÄHLT</Text> : null}
-                    </Pressable>
-                  )
-                })}
-              </Split>
-            </Card>
-          ) : null}
-        </Animated.View>
-
-        <Split>
-          {index > 0 ? (
-            <Button tone="secondary" onPress={() => setStep(STEPS[index - 1].id)}>← Zurück</Button>
-          ) : (
-            <Button tone="secondary" onPress={skip}>Später einrichten</Button>
-          )}
-          <Button onPress={next} disabled={saving || !actor}>{isLast ? (saving ? 'Speichere…' : "Fertig – los geht's") : 'Weiter →'}</Button>
-        </Split>
-      </Stack>
+        {step === 'theme' ? (
+          <Card>
+            <CardHeader overline="Schritt 4" title="Euer Look" icon="color-palette-outline" />
+            <Grid columns={{ compact: 1, medium: 3, expanded: 3 }}>
+              {THEME_ORDER.map((themeId) => {
+                const theme = THEMES[themeId]
+                const selected = runtime.themeId === themeId
+                return (
+                  <PressableScale
+                    key={themeId}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={theme.label}
+                    onPress={() => { Feedback.tap(); runtime.setTheme(themeId) }}
+                    style={{
+                      borderRadius: radius.lg, padding: spacing.sm, gap: spacing.sm,
+                      backgroundColor: theme.bgElevated, borderWidth: selected ? 2 : 1, borderColor: selected ? theme.accent : theme.borderStrong,
+                    }}
+                  >
+                    <View style={{ height: 56, borderRadius: radius.md, backgroundColor: theme.bg, padding: spacing.xs, flexDirection: 'row', gap: 6, alignItems: 'flex-end' }}>
+                      <View style={{ flex: 1, height: 22, borderRadius: radius.xs, backgroundColor: theme.surface }} />
+                      <View style={{ flex: 1, height: 34, borderRadius: radius.xs, backgroundColor: theme.surfaceSoft }} />
+                      <View style={{ flex: 1, height: 40, borderRadius: radius.xs, backgroundColor: theme.accent }} />
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                      <AppText variant="label" numberOfLines={1} style={{ flex: 1, color: theme.text }}>{theme.label}</AppText>
+                      <Ionicons name={selected ? 'checkmark-circle' : 'ellipse-outline'} size={22} color={selected ? theme.accent : theme.subtle} />
+                    </View>
+                  </PressableScale>
+                )
+              })}
+            </Grid>
+          </Card>
+        ) : null}
+      </Animated.View>
     </Screen>
-  )
-}
-
-function StepButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => ({
-        width: 52, height: 52, borderRadius: radius.pill,
-        backgroundColor: pressed ? colors.accent : colors.surfaceSoft, borderWidth: 1, borderColor: colors.border,
-        alignItems: 'center', justifyContent: 'center',
-      })}
-    >
-      <Text style={{ fontSize: 22, fontWeight: '800', color: colors.accentStrong }}>{label}</Text>
-    </Pressable>
   )
 }
 
 function OptionCard({ selected, title, description, onPress }: { selected: boolean; title: string; description: string; onPress: () => void }) {
   return (
-    <Pressable
+    <PressableScale
       accessibilityRole="radio"
       accessibilityState={{ selected }}
       onPress={onPress}
-      style={({ pressed }) => ({
-        flexDirection: 'row', alignItems: 'center', gap: spacing.md,
-        borderRadius: radius.md, padding: spacing.md,
-        backgroundColor: selected ? colors.surfaceSoft : colors.surface,
+      pressedScale={0.985}
+      style={{
+        flexDirection: 'row', alignItems: 'flex-start', gap: spacing.sm,
+        borderRadius: radius.md, padding: spacing.sm,
+        backgroundColor: selected ? colors.accentSoft : colors.surface,
         borderWidth: 1, borderColor: selected ? colors.accent : colors.border,
-        opacity: pressed ? 0.75 : 1,
-      })}
+      }}
     >
-      <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={22} color={selected ? colors.accentStrong : colors.muted} />
+      <Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={20} color={selected ? colors.accentStrong : colors.subtle} style={{ marginTop: 1 }} />
       <View style={{ flex: 1, gap: 2 }}>
-        <Text style={{ color: colors.text, fontWeight: '900' }}>{title}</Text>
-        <Text style={{ color: colors.muted, lineHeight: 19 }}>{description}</Text>
+        <AppText variant="bodyStrong">{title}</AppText>
+        <AppText variant="caption" tone="muted">{description}</AppText>
       </View>
-    </Pressable>
+    </PressableScale>
   )
 }

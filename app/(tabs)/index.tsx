@@ -1,147 +1,275 @@
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { useRouter } from "expo-router";
-import { ActivityIndicator, Text } from "react-native";
+import { useMemo } from "react";
+import { View } from "react-native";
 
-import { BrandHero } from "@/components/brand";
-import { Badge, Button, Card, EmptyState, ListRow, Notice, Screen, SectionTitle, Split, Stack, StatCard, LoadError } from "@/components/ui";
+import { PlayerAvatar } from "@/components/avatar";
+import { BrandEmblem } from "@/components/brand";
+import { BarChart, Donut, LineChart } from "@/components/charts";
+import {
+  AppText,
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  Divider,
+  EmptyState,
+  Grid,
+  KpiTile,
+  ListRow,
+  LoadError,
+  Notice,
+  Row,
+  Screen,
+  ScreenHeader,
+  SkeletonScreen,
+  Split,
+  Stack,
+  StatTile,
+} from "@/components/ui";
+import { getDashboardCharts } from "@/db/chart-queries";
 import { formatCurrency, formatDateTime } from "@/domain/format";
 import { describeHistoryEntry } from "@/domain/history";
 import { useAsyncResource } from "@/hooks/use-async-resource";
+import { useDeviceLayout } from "@/hooks/use-device-layout";
 import { hasActiveCorePlayers } from "@/hooks/use-onboarding";
 import { useRuntime } from "@/providers/runtime-provider";
 import { SessionService } from "@/services/session-service";
-import { colors } from "@/theme/tokens";
+import { colors, spacing } from "@/theme/tokens";
+
+function shortDate(iso: string) {
+  return new Date(iso).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
+}
+
+function euroAxis(cents: number) {
+  return `${Math.round(cents / 100)} €`;
+}
 
 export default function DashboardScreen() {
   const router = useRouter();
   const runtime = useRuntime();
-  const snapshot = useAsyncResource(() => SessionService.getDashboardSnapshot(), [runtime.dataVersion]);
-
-  if (snapshot.error && !snapshot.loading) return <LoadError error={snapshot.error} onRetry={snapshot.reload} />
-
-  if (snapshot.loading || !snapshot.data) {
-    return (
-      <Screen>
-        <ActivityIndicator color={colors.accentStrong} size="large" />
-      </Screen>
+  const { isTablet } = useDeviceLayout();
+  const resource = useAsyncResource(() => {
+    const snapshot = SessionService.getDashboardSnapshot();
+    const charts = getDashboardCharts(
+      { paidCents: snapshot.cashbox.totalPaymentsCents, openCents: snapshot.cashbox.totalOutstandingCents },
+      shortDate,
     );
-  }
+    return { snapshot, charts };
+  }, [runtime.dataVersion]);
 
-  const openSession = snapshot.data.openSession;
   const isAdvanced = runtime.viewMode === "advanced";
+  const data = resource.data;
+
+  const trendSeries = useMemo(() => {
+    if (!data) return [];
+    const series = [{ id: "loss", label: "Verluste", color: colors.accent, points: data.charts.trend.lossCents }];
+    if (data.charts.trend.absenceCents.some((value) => value > 0)) {
+      series.push({ id: "absence", label: "Abwesenheit", color: colors.info, points: data.charts.trend.absenceCents });
+    }
+    return series;
+  }, [data]);
+
+  const debtorBars = useMemo(() => {
+    if (!data) return [];
+    return data.snapshot.debtors
+      .filter((debtor) => debtor.openDebtCents > 0)
+      .slice(0, isAdvanced ? 6 : 3)
+      .map((debtor) => ({
+        id: debtor.playerId,
+        label: debtor.playerName,
+        value: debtor.openDebtCents,
+        display: formatCurrency(debtor.openDebtCents),
+        sublabel: isAdvanced ? `Verluste ${formatCurrency(debtor.lossCents)}` : debtor.isCore ? undefined : "Gast",
+        avatar: { id: debtor.playerId, name: debtor.playerName },
+      }));
+  }, [data, isAdvanced]);
+
+  const donutData = useMemo(() => {
+    if (!data) return [];
+    const { totalPaymentsCents, totalOutstandingCents } = data.snapshot.cashbox;
+    return [
+      { key: "paid", label: "Eingezahlt", value: totalPaymentsCents, color: colors.accent, display: formatCurrency(totalPaymentsCents) },
+      { key: "open", label: "Noch offen", value: Math.max(0, totalOutstandingCents), color: colors.danger, display: formatCurrency(Math.max(0, totalOutstandingCents)) },
+    ];
+  }, [data]);
+
+  if (resource.error && !data) return <LoadError error={resource.error} onRetry={resource.reload} />;
+  if (!data) return <SkeletonScreen variant="dashboard" />;
+
+  const { snapshot, charts } = data;
+  const openSession = snapshot.openSession;
   const needsSetup = !openSession && !hasActiveCorePlayers();
+  const goToEvening = () => router.push(openSession ? `/session/${openSession.id}` : "/(tabs)/sessions");
+  const hasMoney = snapshot.cashbox.totalPaymentsCents > 0 || snapshot.cashbox.totalOutstandingCents > 0;
 
   return (
     <Screen>
-      <Stack>
-        {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
+      <ScreenHeader
+        leading={<BrandEmblem size={isTablet ? 36 : 32} themeId={runtime.themeId} />}
+        title="Schockboard"
+        context={openSession ? `Live: ${openSession.title} · ${openSession.presentCount} am Tisch` : "Bereit für den nächsten Abend"}
+        badge={openSession ? <Badge tone="success" dot>LIVE</Badge> : null}
+        actions={
+          isTablet ? (
+            <>
+              <Button tone="secondary" icon="wallet-outline" onPress={() => router.push("/(tabs)/cashbox")}>Zahlung</Button>
+              <Button icon={openSession ? "play" : "add"} onPress={goToEvening}>{openSession ? "Weiterspielen" : "Abend starten"}</Button>
+            </>
+          ) : null
+        }
+      />
 
-        <BrandHero
-          themeId={runtime.themeId}
-          title="Dein Schockboard"
-          subtitle={openSession ? `Live: ${openSession.title} – ${openSession.presentCount} Spieler am Tisch` : 'Eine Runde. Ein Brett. Alles im Blick.'}
-          aside={<Badge tone={openSession ? "success" : "default"}>{openSession ? "● LIVE" : "BEREIT"}</Badge>}
-        />
-        {needsSetup ? (
-          <Card tone="accent">
-            <SectionTitle eyebrow="Erste Schritte" title="Stammrunde einrichten" />
-            <Text style={{ color: colors.muted }}>Lege deine Stammspieler, den Einsatz und die Abwesenheitsregel in einem kurzen Assistenten fest.</Text>
-            <Button onPress={() => router.push("/onboarding")}>Einrichtung starten →</Button>
-          </Card>
-        ) : null}
+      {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
 
-        <Split>
-          <Button onPress={() => router.push(openSession ? `/session/${openSession.id}` : "/(tabs)/sessions")}>
-            {openSession ? "Jetzt Verluste buchen →" : "Neuen Spielabend starten →"}
+      {!isTablet ? (
+        <Row gap={spacing.xs}>
+          <Button icon={openSession ? "play" : "add"} onPress={goToEvening} style={{ flex: 1 }}>
+            {openSession ? "Weiterspielen" : "Abend starten"}
           </Button>
-          <Button tone="secondary" onPress={() => router.push("/(tabs)/cashbox")}>Zahlung buchen</Button>
-        </Split>
+          <Button tone="secondary" icon="wallet-outline" onPress={() => router.push("/(tabs)/cashbox")}>Zahlung</Button>
+        </Row>
+      ) : null}
 
-        <Split>
-          <StatCard
-            label="Getränkekasse"
-            value={formatCurrency(snapshot.data.cashbox.totalPaymentsCents)}
-            hint="Alle erfassten Zahlungen"
-          />
-          <StatCard
-            label="Offene Schulden"
-            value={formatCurrency(snapshot.data.cashbox.totalOutstandingCents)}
-            hint="Noch nicht eingezahlte Beträge"
-          />
-        </Split>
+      {needsSetup ? (
+        <Card tone="accent">
+          <CardHeader overline="Erste Schritte" title="Stammrunde einrichten" icon="rocket-outline" />
+          <AppText tone="muted">Lege deine Stammspieler, den Einsatz und die Abwesenheitsregel in einem kurzen Assistenten fest.</AppText>
+          <Button iconRight="arrow-forward" onPress={() => router.push("/onboarding")}>Einrichtung starten</Button>
+        </Card>
+      ) : null}
 
-        <Split>
+      {openSession ? (
+        <Card tone="hero">
+          <CardHeader
+            overline={`Läuft seit ${formatDateTime(openSession.startedAt)}`}
+            title={openSession.title}
+            icon="radio-outline"
+            aside={<Badge tone="success" dot>LIVE</Badge>}
+          />
+          <Row gap={spacing.xs}>
+            <StatTile label="Am Tisch" value={`${openSession.presentCount}`} icon="people-outline" />
+            <StatTile label="Verluste" value={`${openSession.lossCount}`} icon="trending-down-outline" />
+            <StatTile label="Gebucht" value={formatCurrency(openSession.totalLossCents)} icon="cash-outline" />
+          </Row>
+          <Button size="lg" icon="grid" iconRight="arrow-forward" onPress={() => router.push(`/session/${openSession.id}`)}>Zum Brett</Button>
+        </Card>
+      ) : null}
+
+      <Grid columns={{ compact: 1, medium: 3, expanded: 3 }} gap={isTablet ? spacing.md : spacing.sm}>
+        <KpiTile
+          tone="hero"
+          icon="wallet"
+          label={snapshot.settings.cashboxLabel || "Kasse"}
+          value={snapshot.cashbox.totalPaymentsCents}
+          format={formatCurrency}
+          sparkline={charts.cashSeries}
+          hint="Alle erfassten Zahlungen"
+        />
+        <KpiTile
+          icon="alert-circle-outline"
+          label="Offene Schulden"
+          value={snapshot.cashbox.totalOutstandingCents}
+          format={formatCurrency}
+          sparkline={charts.debtSeries}
+          sparkColor={colors.danger}
+          valueTone={snapshot.cashbox.totalOutstandingCents > 0 ? "default" : "success"}
+          hint="Noch nicht eingezahlt"
+        />
+        <KpiTile
+          icon="trending-down-outline"
+          label="Verluste · letzte 5 Abende"
+          value={charts.recentLossCents}
+          format={formatCurrency}
+          sparkline={charts.recentLossSeries}
+          sparkColor={colors.muted}
+          hint={charts.recentEveningCount ? `Aus ${charts.recentEveningCount} abgeschlossenen ${charts.recentEveningCount === 1 ? "Abend" : "Abenden"}` : "Noch kein Abend abgeschlossen"}
+        />
+      </Grid>
+
+      <Split weights={[7, 5]}>
+        <Card>
+          <CardHeader overline="Trend" title="Verluste pro Abend" icon="analytics-outline" aside={charts.trend.labels.length ? <Badge>{charts.trend.labels.length} Abende</Badge> : null} />
+          {charts.trend.labels.length >= 2 ? (
+            <LineChart series={trendSeries} labels={charts.trend.labels} height={isTablet ? 240 : 190} formatY={euroAxis} area legend={trendSeries.length > 1} />
+          ) : (
+            <EmptyState icon="analytics-outline" title="Noch zu wenig Daten">
+              Nach zwei abgeschlossenen Abenden erscheint hier der Verlauf.
+            </EmptyState>
+          )}
+        </Card>
+
+        <Card>
+          <CardHeader overline="Kasse" title="Eingezahlt vs. offen" icon="pie-chart-outline" />
+          {hasMoney ? (
+            <Donut
+              data={donutData}
+              size={isTablet ? 150 : 128}
+              centerValue={formatCurrency(snapshot.cashbox.totalPaymentsCents)}
+              centerLabel="In der Kasse"
+            />
+          ) : (
+            <EmptyState icon="wallet-outline">Noch keine Buchungen in der Kasse.</EmptyState>
+          )}
+          <Divider />
+          <CardHeader overline="Offene Posten" title="Größte Zahler" />
+          {debtorBars.length ? (
+            <BarChart data={debtorBars} onPressItem={() => router.push("/(tabs)/cashbox")} />
+          ) : (
+            <EmptyState icon="checkmark-done-outline">Keine offenen Schulden – alles beglichen.</EmptyState>
+          )}
+        </Card>
+      </Split>
+
+      {isAdvanced ? (
+        <Split weights={[7, 5]}>
           <Card>
-            <SectionTitle
-              eyebrow="Aktiver Abend"
-              title="Session-Status"
-            aside={openSession ? <Badge tone="success">Offen</Badge> : <Badge>Kein Abend offen</Badge>}
-          />
-            {openSession ? (
-              <Stack>
-                <ListRow
-                  title={openSession.title}
-                  detail={formatDateTime(openSession.startedAt)}
-                  value=""
-                />
-                <Text style={{ color: colors.muted }}>
-                  {openSession.presentCount} anwesend · {openSession.lossCount} Verluste · {formatCurrency(openSession.totalLossCents)} geloggt
-                </Text>
-                <Button onPress={() => router.push(`/session/${openSession.id}`)}>Zum Abend</Button>
-              </Stack>
+            <CardHeader overline="Letzte Buchungen" title="Timeline" icon="time-outline" />
+            {snapshot.recentHistory.length ? (
+              <View>
+                {snapshot.recentHistory.map((entry, index) => {
+                  const display = describeHistoryEntry(entry);
+                  return (
+                    <View key={entry.id}>
+                      {index > 0 ? <Divider /> : null}
+                      <ListRow
+                        leading={entry.playerId && entry.playerName ? <PlayerAvatar id={entry.playerId} name={entry.playerName} size={28} /> : <HistoryIcon kind={entry.kind} />}
+                        title={display.title}
+                        detail={[formatDateTime(entry.createdAt), display.detail].filter(Boolean).join(" · ")}
+                        value={entry.amountCents !== null ? formatCurrency(entry.amountCents) : undefined}
+                      />
+                    </View>
+                  );
+                })}
+              </View>
             ) : (
-              <EmptyState>Aktuell ist kein Spielabend offen. Über „Neuen Spielabend starten“ legst du direkt den nächsten Abend an.</EmptyState>
+              <EmptyState icon="time-outline">Noch keine Buchungen.</EmptyState>
             )}
           </Card>
 
-          <Card>
-            <SectionTitle eyebrow="Offene Posten" title="Größte Zahler" />
-            <Stack>
-              {snapshot.data.debtors.slice(0, isAdvanced ? 6 : 3).length > 0 ? (
-                snapshot.data.debtors.slice(0, isAdvanced ? 6 : 3).map((debtor) => (
-                  <ListRow
-                    key={debtor.playerId}
-                    title={debtor.playerName}
-                    detail={isAdvanced ? `${debtor.isCore ? "Stammrunde" : "Gast"} · Verluste ${formatCurrency(debtor.lossCents)}` : `${debtor.isCore ? "Stammrunde" : "Gast"}`}
-                    value={formatCurrency(debtor.openDebtCents)}
-                  />
-                ))
-              ) : (
-                <EmptyState>Noch keine offenen Schulden vorhanden.</EmptyState>
-              )}
+          <Card tone="accent">
+            <CardHeader overline="Hausregeln" title={snapshot.settings.ruleProfile.title} icon="book-outline" aside={<Badge tone="accent">{snapshot.settings.ruleProfile.alias.general}</Badge>} />
+            <AppText tone="muted">{snapshot.settings.ruleProfile.overview}</AppText>
+            <Stack gap={spacing.xs}>
+              {snapshot.settings.ruleProfile.ranking.map((item, index) => (
+                <Row key={item} gap={spacing.xs} align="flex-start">
+                  <AppText variant="numericSm" tone="accent" style={{ width: 20 }}>{index + 1}</AppText>
+                  <AppText style={{ flex: 1 }}>{item}</AppText>
+                </Row>
+              ))}
             </Stack>
           </Card>
         </Split>
-
-        {isAdvanced ? (
-          <Split>
-            <Card>
-              <SectionTitle eyebrow="Letzte Buchungen" title="Timeline" />
-              <Stack>
-                {snapshot.data.recentHistory.map((entry) => {
-                  const display = describeHistoryEntry(entry);
-                  const detail = [display.detail, entry.amountCents !== null ? formatCurrency(entry.amountCents) : null]
-                    .filter(Boolean)
-                    .join(" · ");
-
-                  return <ListRow key={entry.id} title={display.title} detail={`${formatDateTime(entry.createdAt)} · ${detail}`} />;
-                })}
-              </Stack>
-            </Card>
-
-            <Card tone="accent">
-              <SectionTitle eyebrow="Hausregeln" title={snapshot.data.settings.ruleProfile.title} aside={<Badge>{snapshot.data.settings.ruleProfile.alias.general}</Badge>} />
-              <Text style={{ color: colors.muted }}>{snapshot.data.settings.ruleProfile.overview}</Text>
-              <Stack>
-                {snapshot.data.settings.ruleProfile.ranking.map((item) => (
-                  <Text key={item} style={{ color: colors.text }}>
-                    • {item}
-                  </Text>
-                ))}
-              </Stack>
-            </Card>
-          </Split>
-        ) : null}
-      </Stack>
+      ) : null}
     </Screen>
+  );
+}
+
+function HistoryIcon({ kind }: { kind: string }) {
+  const icon = kind === "payment" ? "wallet-outline" : kind === "correction" ? "construct-outline" : kind === "audit" ? "document-text-outline" : "ellipse-outline";
+  return (
+    <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceSoft }}>
+      <Ionicons name={icon} size={14} color={colors.muted} />
+    </View>
   );
 }

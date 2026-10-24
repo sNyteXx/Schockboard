@@ -5,6 +5,7 @@ vi.mock('@/db/client', async () => (await import('./support/memory-sqlite')).cli
 
 import { ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
 import {
+  cancelSession,
   addBeerRoundEntry,
   addLossEntry,
   closeSession,
@@ -123,5 +124,26 @@ describe('attendance guard', () => {
     expect(() => toggleAttendance({ actor, sessionId, playerId: present[0] })).toThrow(/Buchungen/)
     deleteLastLoss({ actor, sessionId, playerId: present[0] })
     expect(() => toggleAttendance({ actor, sessionId, playerId: present[0] })).not.toThrow()
+  })
+})
+
+describe('cancelling an evening', () => {
+  it('discards bookings without absence charges and keeps payments', () => {
+    const { sessionId, present } = setUpEvening('full_average')
+    addLossEntry({ actor, sessionId, playerId: present[0], note: null })
+    addBeerRoundEntry({ actor, sessionId, playerId: present[1], amountCents: 500, note: null })
+
+    cancelSession({ actor, sessionId })
+
+    expect(memory.current.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM sessions')!.n).toBe(0)
+    expect(memory.current.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM loss_entries')!.n).toBe(0)
+    expect(memory.current.getFirstSync<{ n: number }>('SELECT COUNT(*) AS n FROM absence_charges')!.n).toBe(0)
+    expect(getDebtSummaries().every((row) => row.openDebtCents === 0)).toBe(true)
+  })
+
+  it('refuses to cancel a closed evening', () => {
+    const { sessionId } = setUpEvening('none')
+    closeSession({ actor, sessionId })
+    expect(() => cancelSession({ actor, sessionId })).toThrow(/offene/)
   })
 })

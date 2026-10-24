@@ -92,6 +92,21 @@ function getAbsenceChargeNote(input: {
   return `Jeder abwesende Stammspieler erhält den vollen Durchschnitt aus ${input.presentCoreCount} anwesenden Stammspielern.`
 }
 
+// Set while the admin web applies changes: they must not leave traces in
+// the app's own log (the admin keeps the command history on the server).
+let auditSuppressed = false
+
+/** Runs `task` without writing audit events (used for admin overrides). */
+export function runWithoutAudit<T>(task: () => T): T {
+  const previous = auditSuppressed
+  auditSuppressed = true
+  try {
+    return task()
+  } finally {
+    auditSuppressed = previous
+  }
+}
+
 export function createAuditEvent(input: {
   actorAccountId?: string | null
   eventType: string
@@ -101,6 +116,7 @@ export function createAuditEvent(input: {
   payload: Record<string, unknown>
 }) {
   ensureDatabaseReady()
+  if (auditSuppressed) return
 
   sqliteRun(
     `
@@ -151,7 +167,7 @@ export function getAppSettings(): AppSettingsRecord {
       cashboxLabel: 'Getränkekasse',
       ruleProfile: SCHOCK_RULE_PROFILE,
       viewMode: 'basic',
-      themeId: 'original',
+      themeId: 'bvb09',
       absencePenaltyMode: 'full_average',
     }
   }
@@ -162,7 +178,7 @@ export function getAppSettings(): AppSettingsRecord {
     cashboxLabel: row.cashbox_label,
     ruleProfile: JSON.parse(row.rule_profile_json),
     viewMode: (row.view_mode as ViewMode) ?? 'basic',
-    themeId: (row.theme_id as ThemeId) ?? 'original',
+    themeId: (row.theme_id as ThemeId) ?? 'bvb09',
     absencePenaltyMode: (row.absence_penalty_mode as AbsencePenaltyMode) ?? 'full_average',
   }
 }
@@ -1306,6 +1322,35 @@ export function deleteLastLossUnsafe(input: { actor: Actor; sessionId: string; p
       },
     })
   }
+}
+
+/**
+ * "Abend abbrechen": discards an open evening as if it never happened –
+ * its losses, beer rounds and attendance go with it (FK cascade), no absence
+ * charges are assessed. Payments/corrections linked to it are kept and only
+ * lose the link.
+ */
+export function cancelSession(input: { actor: Actor; sessionId: string }) {
+  getSqlite().withTransactionSync(() => {
+    const session = sqliteGet<{ status: string; title: string }>('SELECT status, title FROM sessions WHERE id = $id', {
+      $id: input.sessionId,
+    })
+    if (!session) throw new Error('Spielabend nicht gefunden.')
+    if (session.status !== 'open') throw new Error('Nur offene Spielabende können abgebrochen werden.')
+
+    const totals = sqliteGet<{ n: number; cents: number | null }>(
+      'SELECT COUNT(*) AS n, SUM(amount_cents) AS cents FROM loss_entries WHERE session_id = $id',
+      { $id: input.sessionId }
+    )
+    sqliteRun('DELETE FROM sessions WHERE id = $id', { $id: input.sessionId })
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'session',
+      entityId: input.sessionId,
+      eventType: 'session.cancelled',
+      payload: { title: session.title, discardedEntries: totals?.n ?? 0, discardedCents: totals?.cents ?? 0 },
+    })
+  })
 }
 
 export function closeSession(input: { actor: Actor; sessionId: string }) {

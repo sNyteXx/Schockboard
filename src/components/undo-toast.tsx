@@ -1,20 +1,22 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import Ionicons from '@expo/vector-icons/Ionicons'
+import { useEffect, useState } from 'react'
+import { Text, View, useWindowDimensions } from 'react-native'
 import Animated, {
   Easing,
   cancelAnimation,
   useAnimatedStyle,
   useSharedValue,
-  withSpring,
   withTiming,
 } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { scheduleOnRN } from 'react-native-worklets'
 
+import { CALM_EASING, PressableScale } from '@/components/motion'
 import { useDeviceLayout } from '@/hooks/use-device-layout'
 import { Feedback } from '@/services/haptics'
 import { UNDO_WINDOW_MS, UndoService } from '@/services/undo-service'
 import { colors, radius, spacing } from '@/theme/tokens'
+import { themedStyles } from '@/theme/use-theme'
 
 // Extra bottom offset requested by screens with a sticky bottom bar.
 let toastLift = 0
@@ -43,7 +45,9 @@ export function UndoToast({
   onError: (message: string) => void
   themeId: string
 }) {
-  const styles = useMemo(makeStyles, [themeId])
+  // themeId keeps the prop contract; styles follow the active theme via themedStyles.
+  void themeId
+  const styles = useStyles()
   const insets = useSafeAreaInsets()
   const [label, setLabel] = useState<string | null>(null)
   const visible = useSharedValue(0)
@@ -80,7 +84,7 @@ export function UndoToast({
         return
       }
       setLabel(pending.label)
-      visible.value = withSpring(1, { damping: 16, stiffness: 220 })
+      visible.value = withTiming(1, { duration: 200, easing: CALM_EASING })
       remaining.value = 1
       remaining.value = withTiming(0, { duration: UNDO_WINDOW_MS, easing: Easing.linear })
     })
@@ -88,7 +92,7 @@ export function UndoToast({
 
   const containerStyle = useAnimatedStyle(() => ({
     opacity: visible.value,
-    transform: [{ translateY: (1 - visible.value) * 32 }, { scale: 0.96 + visible.value * 0.04 }],
+    transform: [{ translateY: (1 - visible.value) * 16 }],
   }))
   const progressStyle = useAnimatedStyle(() => ({ transform: [{ scaleX: remaining.value }] }))
 
@@ -111,10 +115,14 @@ export function UndoToast({
   return (
     <Animated.View style={[styles.container, { bottom: Math.max(insets.bottom, 12) + (isTablet ? 12 : 72) + lift, width: toastWidth, left: (windowWidth - toastWidth) / 2 }, containerStyle]}>
       <View style={styles.row}>
-        <Text style={styles.text}>{label}</Text>
-        <Pressable accessibilityRole="button" onPress={handleUndo} style={({ pressed }) => [styles.button, pressed && { opacity: 0.75 }]}>
+        <View style={styles.icon}>
+          <Ionicons name="checkmark" size={16} color={colors.success} />
+        </View>
+        <Text style={styles.text} numberOfLines={2}>{label}</Text>
+        <PressableScale accessibilityRole="button" accessibilityLabel="Rückgängig" onPress={handleUndo} pressedScale={0.94} style={styles.button}>
+          <Ionicons name="arrow-undo" size={16} color={colors.buttonPrimaryText} />
           <Text style={styles.buttonText}>Rückgängig</Text>
-        </Pressable>
+        </PressableScale>
       </View>
       <View style={styles.track}>
         <Animated.View style={[styles.progress, progressStyle]} />
@@ -123,47 +131,40 @@ export function UndoToast({
   )
 }
 
-function makeStyles() {
-  return StyleSheet.create({
-    container: {
-      position: 'absolute',
-      backgroundColor: colors.bgElevated,
-      borderColor: colors.accent,
-      borderWidth: 1,
-      borderRadius: radius.lg,
-      overflow: 'hidden',
-      shadowColor: '#000',
-      shadowOpacity: 0.35,
-      shadowRadius: 14,
-      shadowOffset: { width: 0, height: 6 },
-      elevation: 8,
-    },
-    row: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: spacing.sm,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm,
-    },
-    text: {
-      color: colors.text,
-      fontSize: 14,
-      fontWeight: '700',
-      flex: 1,
-    },
-    button: {
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.xs,
-      borderRadius: radius.pill,
-      backgroundColor: colors.accent,
-    },
-    buttonText: {
-      color: colors.buttonPrimaryText,
-      fontWeight: '800',
-      fontSize: 14,
-    },
-    track: { height: 3, backgroundColor: colors.surfaceSoft },
-    progress: { height: 3, backgroundColor: colors.accent, transformOrigin: 'left' },
-  })
-}
+const useStyles = themedStyles(({ c, t }) => ({
+  container: {
+    position: 'absolute',
+    backgroundColor: c.surface,
+    borderColor: c.borderStrong,
+    borderWidth: 1,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 10,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingLeft: spacing.sm,
+    paddingRight: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  icon: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: c.successSoft },
+  text: { ...t.bodyStrong, color: c.text, flex: 1 },
+  button: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: 40,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: c.accent,
+  },
+  buttonText: { ...t.label, color: c.buttonPrimaryText },
+  track: { height: 3, backgroundColor: c.surfaceSoft },
+  progress: { height: 3, backgroundColor: c.accent, transformOrigin: 'left' },
+}))

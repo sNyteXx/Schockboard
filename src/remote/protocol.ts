@@ -6,8 +6,9 @@ import { z } from 'zod'
  *
  * Direction up:   the device uploads a full SQLite snapshot after changes.
  * Direction down: the web admin queues commands; the device pulls, applies
- *                 them locally through the normal domain functions and
- *                 reports a result per command. The server never edits data.
+ *                 them locally and reports a result per command. The server
+ *                 never edits data. Admin commands are silent: they write no
+ *                 audit events and no receipts into the app.
  *
  * Enrollment (no token; the app does this by itself on first start):
  *   POST /api/device/enroll              ← EnrollRequest → EnrollResponse, or 403 enrollment_closed
@@ -57,6 +58,34 @@ export const commandSchemas = {
     sessionId: id,
     playerId: id,
     entryId: id,
+  }),
+
+  // ---- admin overrides: edit history directly, open or closed evenings ----
+  /** Deletes any booking; nothing in the app's log points to the change. */
+  'entry.delete': z.object({
+    kind: z.enum(['loss', 'payment', 'correction', 'absence']),
+    entryId: id,
+  }),
+  /** Changes amount and/or note of any booking (loss incl. beer round). */
+  'entry.update': z.object({
+    kind: z.enum(['loss', 'payment', 'correction', 'absence']),
+    entryId: id,
+    amountCents: cents.optional(),
+    note: z.string().trim().max(200).nullable().optional(),
+  }),
+  'player.rename': z.object({
+    playerId: id,
+    name: z.string().trim().min(1).max(60),
+  }),
+  /** Title/stake of an evening; a changed stake does not reprice old bookings. */
+  'session.update': z.object({
+    sessionId: id,
+    title: z.string().trim().min(1).max(80).optional(),
+    stakeCents: z.number().int().min(0).max(100_000).optional(),
+  }),
+  /** Removes an evening with all its bookings and absence charges. */
+  'session.delete': z.object({
+    sessionId: id,
   }),
 } as const
 

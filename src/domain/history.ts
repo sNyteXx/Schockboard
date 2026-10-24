@@ -21,6 +21,7 @@ function translateAuditEvent(eventType: string) {
     'player.updated': 'Spielerstatus geändert',
     'player.deleted': 'Spieler gelöscht',
     'session.closed': 'Spielabend abgeschlossen',
+    'session.cancelled': 'Spielabend abgebrochen',
     'session.close_attempted_already_closed': 'Abschlussversuch (bereits geschlossen)',
     'session.created': 'Spielabend angelegt',
     'session.guest_added': 'Gast hinzugefügt',

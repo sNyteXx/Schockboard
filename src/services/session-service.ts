@@ -4,6 +4,7 @@ import {
   addGuestToSession,
   addLossEntry,
   closeSession,
+  cancelSession,
   createPlayer,
   createSession,
   deleteLastLoss,
@@ -39,6 +40,7 @@ export const SessionService = {
   deleteLastLoss,
   addBeerRoundEntry,
   closeSession,
+  cancelSession,
   createCorePlayer(input: { actor: Actor; name: string }) {
     return createPlayer({
       actor: input.actor,

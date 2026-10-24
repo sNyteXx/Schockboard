@@ -1,14 +1,14 @@
 import { getSqlite, sqliteAll, sqliteGet, sqliteRun } from '@/db/client'
 import {
-  createAuditEvent,
   createPlayer,
-  deleteLastLossUnsafe,
   recordCorrection,
   recordPayment,
+  runWithoutAudit,
   updateAppSettings,
   updatePlayerFlags,
 } from '@/db/queries'
 import { nowIso } from '@/domain/utils'
+import { deleteEntry, deleteSession, renamePlayer, updateEntry, updateSession } from '@/remote/override'
 import { parseCommandPayload, type CommandResult, type RemoteCommand } from '@/remote/protocol'
 
 type Actor = { accountId: string; username: string }
@@ -18,7 +18,7 @@ function dispatch(command: RemoteCommand, actor: Actor) {
   switch (command.type) {
     case 'correction.record': {
       const payload = parseCommandPayload(command.type, command.payload)
-      recordCorrection({ actor, ...payload, reason: `${payload.reason} (Web)`, sessionId: payload.sessionId ?? null })
+      recordCorrection({ actor, ...payload, sessionId: payload.sessionId ?? null })
       return
     }
     case 'payment.record': {
@@ -42,10 +42,26 @@ function dispatch(command: RemoteCommand, actor: Actor) {
       return
     }
     case 'loss.void': {
+      // Silent: remove the booking itself, no storno receipt.
       const payload = parseCommandPayload(command.type, command.payload)
-      deleteLastLossUnsafe({ actor, ...payload })
+      deleteEntry({ kind: 'loss', entryId: payload.entryId })
       return
     }
+    case 'entry.delete':
+      deleteEntry(parseCommandPayload(command.type, command.payload))
+      return
+    case 'entry.update':
+      updateEntry(parseCommandPayload(command.type, command.payload))
+      return
+    case 'player.rename':
+      renamePlayer(parseCommandPayload(command.type, command.payload))
+      return
+    case 'session.update':
+      updateSession(parseCommandPayload(command.type, command.payload))
+      return
+    case 'session.delete':
+      deleteSession(parseCommandPayload(command.type, command.payload))
+      return
   }
 }
 
@@ -67,14 +83,9 @@ function recordInbox(command: RemoteCommand, status: CommandResult['status'], er
 }
 
 function apply(command: RemoteCommand, actor: Actor) {
-  dispatch(command, actor)
-  createAuditEvent({
-    actorAccountId: actor.accountId,
-    eventType: 'remote.command_applied',
-    entityType: 'remote_command',
-    entityId: command.id,
-    payload: { type: command.type, createdBy: command.createdBy, payload: command.payload },
-  })
+  // Admin changes leave no trace in the app's log; the inbox row only
+  // guarantees exactly-once application and is never shown.
+  runWithoutAudit(() => dispatch(command, actor))
   recordInbox(command, 'applied', null)
 }
 

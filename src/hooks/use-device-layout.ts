@@ -1,7 +1,14 @@
 import { useWindowDimensions } from "react-native";
 
+import { typeScaleFor } from "@/theme/typography";
+
 export function classifyWindowWidth(width: number) {
   return width >= 1000 ? "expanded" : width >= 600 ? "medium" : "compact";
+}
+
+/** Horizontal page padding per size class (4/8 grid). */
+export function pagePaddingFor(width: number) {
+  return width >= 1400 ? 32 : width >= 1000 ? 28 : width >= 600 ? 24 : 16;
 }
 
 export function useDeviceLayout() {
@@ -19,5 +26,8 @@ export function useDeviceLayout() {
     isTablet: sizeClass !== "compact",
     isWide: sizeClass === "expanded",
     isLandscape: width > height,
+    /** Type multiplier (1 – 1.25), see typeScaleFor(). */
+    typeScale: typeScaleFor(width),
+    pagePadding: pagePaddingFor(width),
   };
 }
