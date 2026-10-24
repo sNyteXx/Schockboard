@@ -100,7 +100,9 @@ export default function CashboxScreen() {
   if (data.error && !data.data) return <LoadError error={data.error} onRetry={data.reload} />;
   if (!data.data || !derived || !runtime.account) return <SkeletonScreen variant="dashboard" />;
 
-  const activePlayers = data.data.players.filter((player) => !player.isArchived);
+  // Archived players can still settle what they owe.
+  const owing = new Set(data.data.debtors.filter((row) => row.openDebtCents > 0).map((row) => row.playerId));
+  const activePlayers = data.data.players.filter((player) => !player.isArchived || owing.has(player.id));
   const { cashbox } = data.data;
   const hasMoney = cashbox.totalPaymentsCents > 0 || cashbox.totalOutstandingCents > 0;
 

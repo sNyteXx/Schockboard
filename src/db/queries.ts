@@ -261,8 +261,41 @@ function ensureUniquePlayerSlug(baseName: string) {
   return slug
 }
 
+/*
+ * Player rules (single source of truth for app and admin web):
+ * - active = not archived; Stammspieler = active + core; Gast = active + not core.
+ * - A new evening loads all active Stammspieler as present.
+ * - Archived players never take part in an evening: they get no absence
+ *   charge and never count for the average. Archiving someone who is in the
+ *   open evening removes them from it – refused if they have bookings there.
+ * - A Stammspieler created or reactivated while an evening is open joins it.
+ * - Adding a guest by name reuses an existing player with that name instead
+ *   of creating a duplicate (and reactivates them if archived).
+ * - Balances of archived players stay visible and payable.
+ */
+
+function getOpenSessionId() {
+  return sqliteGet<{ id: string }>("SELECT id FROM sessions WHERE status = 'open' ORDER BY started_at DESC LIMIT 1")?.id ?? null
+}
+
+function addToSession(sessionId: string, playerId: string) {
+  const now = nowIso()
+  sqliteRun(
+    `
+      INSERT INTO session_attendance (id, session_id, player_id, present, created_at, updated_at)
+      VALUES ($id, $sessionId, $playerId, 1, $now, $now)
+      ON CONFLICT (session_id, player_id) DO UPDATE SET present = 1, updated_at = $now
+    `,
+    { $id: createId('attendance'), $sessionId: sessionId, $playerId: playerId, $now: now }
+  )
+}
+
 export function createPlayer(input: { name: string; isCore: boolean; actor: Actor }) {
   ensureDatabaseReady()
+  const name = input.name.trim()
+  if (!name) throw new Error('Bitte einen Namen eingeben.')
+  const duplicate = sqliteGet<{ id: string }>('SELECT id FROM players WHERE lower(name) = lower($name) LIMIT 1', { $name: name })
+  if (duplicate) throw new Error(`„${name}“ gibt es schon – ggf. unter „Archiviert“ reaktivieren.`)
 
   const playerId = createId('player')
   const now = nowIso()
@@ -274,8 +307,8 @@ export function createPlayer(input: { name: string; isCore: boolean; actor: Acto
     `,
     {
       $id: playerId,
-      $name: input.name,
-      $slug: ensureUniquePlayerSlug(input.name),
+      $name: name,
+      $slug: ensureUniquePlayerSlug(name),
       $isCore: input.isCore ? 1 : 0,
       $createdAt: now,
       $updatedAt: now,
@@ -288,10 +321,13 @@ export function createPlayer(input: { name: string; isCore: boolean; actor: Acto
     entityId: playerId,
     eventType: input.isCore ? 'player.core_created' : 'player.guest_created',
     payload: {
-      name: input.name,
+      name,
       isCore: input.isCore,
     },
   })
+
+  const openSessionId = input.isCore ? getOpenSessionId() : null
+  if (openSessionId) addToSession(openSessionId, playerId)
 
   return playerId
 }
@@ -316,6 +352,26 @@ export function updatePlayerFlags(input: {
   const next = {
     isCore: input.isCore ?? Boolean(existing.is_core),
     isArchived: input.isArchived ?? Boolean(existing.is_archived),
+  }
+  const openSessionId = getOpenSessionId()
+
+  if (openSessionId && next.isArchived && !existing.is_archived) {
+    const booked = sqliteGet<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM loss_entries WHERE session_id = $sessionId AND player_id = $playerId',
+      { $sessionId: openSessionId, $playerId: input.playerId }
+    )
+    if (booked && booked.n > 0) {
+      throw new Error('Spieler hat am laufenden Abend Buchungen – erst nach dem Abschluss archivieren.')
+    }
+    sqliteRun('DELETE FROM session_attendance WHERE session_id = $sessionId AND player_id = $playerId', {
+      $sessionId: openSessionId,
+      $playerId: input.playerId,
+    })
+  }
+
+  // Reactivated (or promoted) regulars join the evening that is running now.
+  if (openSessionId && !next.isArchived && next.isCore && (existing.is_archived || !existing.is_core)) {
+    addToSession(openSessionId, input.playerId)
   }
 
   sqliteRun(
@@ -437,7 +493,7 @@ export function getDebtSummaries() {
         FROM session_attendance sa2
         INNER JOIN players p2 ON p2.id = sa2.player_id
         INNER JOIN sessions s2 ON s2.id = sa2.session_id
-        WHERE sa2.present = 1 AND p2.is_core = 1 AND s2.status = 'open'
+        WHERE sa2.present = 1 AND p2.is_core = 1 AND p2.is_archived = 0 AND s2.status = 'open'
         GROUP BY sa2.session_id
       ),
       absent_core_counts AS (
@@ -445,7 +501,7 @@ export function getDebtSummaries() {
         FROM session_attendance sa4
         INNER JOIN players p4 ON p4.id = sa4.player_id
         INNER JOIN sessions s4 ON s4.id = sa4.session_id
-        WHERE sa4.present = 0 AND p4.is_core = 1 AND s4.status = 'open'
+        WHERE sa4.present = 0 AND p4.is_core = 1 AND p4.is_archived = 0 AND s4.status = 'open'
         GROUP BY sa4.session_id
       ),
       present_core_loss_totals AS (
@@ -454,7 +510,7 @@ export function getDebtSummaries() {
         INNER JOIN session_attendance sa3 ON sa3.session_id = le.session_id AND sa3.player_id = le.player_id
         INNER JOIN players p3 ON p3.id = le.player_id
         INNER JOIN sessions s3 ON s3.id = le.session_id
-        WHERE sa3.present = 1 AND p3.is_core = 1 AND s3.status = 'open' AND le.is_beer_round = 0
+        WHERE sa3.present = 1 AND p3.is_core = 1 AND p3.is_archived = 0 AND s3.status = 'open' AND le.is_beer_round = 0
         GROUP BY le.session_id
       ),
       pending_absence_totals AS (
@@ -477,6 +533,7 @@ export function getDebtSummaries() {
           WHERE s.status = 'open'
             AND sa.present = 0
             AND absent_player.is_core = 1
+            AND absent_player.is_archived = 0
             AND pc.present_core_count > 0
             AND ac.absent_core_count > 0
             AND COALESCE(pl.total_present_core_loss_cents, 0) > 0
@@ -1031,26 +1088,30 @@ export function addGuestToSession(input: { actor: Actor; sessionId: string; name
     throw new Error('Gäste können nur in offene Spielabende aufgenommen werden.')
   }
 
-  const playerId = createPlayer({
-    name: input.name,
-    isCore: false,
-    actor: input.actor,
-  })
+  const name = input.name.trim()
+  if (!name) throw new Error('Bitte einen Namen eingeben.')
 
-  const now = nowIso()
-  sqliteRun(
-    `
-      INSERT INTO session_attendance (id, session_id, player_id, present, created_at, updated_at)
-      VALUES ($id, $sessionId, $playerId, 1, $createdAt, $updatedAt)
-    `,
-    {
-      $id: createId('attendance'),
-      $sessionId: input.sessionId,
-      $playerId: playerId,
-      $createdAt: now,
-      $updatedAt: now,
-    }
+  // Same guest next week = same player (one balance, one statistic).
+  const known = sqliteGet<{ id: string; is_archived: number }>(
+    'SELECT id, is_archived FROM players WHERE lower(name) = lower($name) LIMIT 1',
+    { $name: name }
   )
+  let playerId: string
+  if (known) {
+    const already = sqliteGet<{ present: number }>(
+      'SELECT present FROM session_attendance WHERE session_id = $sessionId AND player_id = $playerId',
+      { $sessionId: input.sessionId, $playerId: known.id }
+    )
+    if (already?.present) throw new Error(`${name} ist heute schon dabei.`)
+    if (known.is_archived) {
+      sqliteRun('UPDATE players SET is_archived = 0, updated_at = $now WHERE id = $id', { $id: known.id, $now: nowIso() })
+    }
+    playerId = known.id
+  } else {
+    playerId = createPlayer({ name, isCore: false, actor: input.actor })
+  }
+
+  addToSession(input.sessionId, playerId)
 
   createAuditEvent({
     actorAccountId: input.actor.accountId,
@@ -1060,7 +1121,8 @@ export function addGuestToSession(input: { actor: Actor; sessionId: string; name
     eventType: 'session.guest_added',
     payload: {
       playerId,
-      name: input.name,
+      name,
+      reused: Boolean(known),
     },
   })
 }
@@ -1406,7 +1468,7 @@ function closeSessionUnsafe(input: { actor: Actor; sessionId: string }) {
       SELECT sa.player_id, sa.present, p.is_core
       FROM session_attendance sa
       INNER JOIN players p ON p.id = sa.player_id
-      WHERE sa.session_id = $sessionId
+      WHERE sa.session_id = $sessionId AND p.is_archived = 0
     `,
     { $sessionId: input.sessionId }
   )

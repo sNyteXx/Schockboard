@@ -5,6 +5,8 @@ vi.mock('@/db/client', async () => (await import('./support/memory-sqlite')).cli
 
 import { ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
 import {
+  addGuestToSession,
+  updatePlayerFlags,
   cancelSession,
   addBeerRoundEntry,
   addLossEntry,
@@ -145,5 +147,51 @@ describe('cancelling an evening', () => {
     const { sessionId } = setUpEvening('none')
     closeSession({ actor, sessionId })
     expect(() => cancelSession({ actor, sessionId })).toThrow(/offene/)
+  })
+})
+
+describe('active and archived players', () => {
+  it('never charges archived regulars and removes them from the open evening', () => {
+    const { sessionId, present, absent } = setUpEvening('full_average')
+    addLossEntry({ actor, sessionId, playerId: present[0], note: null })
+
+    // absent regular gets archived mid-evening → no absence charge for them
+    updatePlayerFlags({ actor, playerId: absent[0], isArchived: true })
+    expect(getSessionDetail(sessionId)!.attendance.some((row) => row.playerId === absent[0])).toBe(false)
+
+    closeSession({ actor, sessionId })
+    const charged = memory.current.getAllSync<{ player_id: string }>('SELECT player_id FROM absence_charges').map((row) => row.player_id)
+    expect(charged).toEqual([absent[1]])
+  })
+
+  it('refuses to archive a player with bookings tonight', () => {
+    const { sessionId, present } = setUpEvening('none')
+    addLossEntry({ actor, sessionId, playerId: present[0], note: null })
+    expect(() => updatePlayerFlags({ actor, playerId: present[0], isArchived: true })).toThrow(/Buchungen/)
+  })
+
+  it('lets reactivated and new regulars join the running evening', () => {
+    const { sessionId, absent } = setUpEvening('none')
+    updatePlayerFlags({ actor, playerId: absent[0], isArchived: true })
+    updatePlayerFlags({ actor, playerId: absent[0], isArchived: false })
+    const fresh = createPlayer({ actor, name: 'Frieda', isCore: true })
+
+    const attendance = getSessionDetail(sessionId)!.attendance
+    expect(attendance.find((row) => row.playerId === absent[0])?.present).toBe(true)
+    expect(attendance.find((row) => row.playerId === fresh)?.present).toBe(true)
+  })
+
+  it('reuses a returning guest instead of creating a duplicate', () => {
+    const first = setUpEvening('none')
+    addGuestToSession({ actor, sessionId: first.sessionId, name: 'Onkel Heinz' })
+    closeSession({ actor, sessionId: first.sessionId })
+
+    createSession({ actor, title: 'Nächste Woche', notes: null, stakeCents: 100 })
+    const next = memory.current.getFirstSync<{ id: string }>("SELECT id FROM sessions WHERE status = 'open'")!.id
+    addGuestToSession({ actor, sessionId: next, name: 'onkel heinz' })
+
+    expect(memory.current.getFirstSync<{ n: number }>("SELECT COUNT(*) AS n FROM players WHERE lower(name) = 'onkel heinz'")!.n).toBe(1)
+    expect(() => addGuestToSession({ actor, sessionId: next, name: 'Onkel Heinz' })).toThrow(/schon dabei/)
+    expect(() => createPlayer({ actor, name: 'ANNA', isCore: true })).toThrow(/gibt es schon/)
   })
 })
