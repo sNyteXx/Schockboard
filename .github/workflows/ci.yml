@@ -15,6 +15,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      # Expo Router's optional web peer chain needs the existing legacy-peer
+      # resolution used for development on this native-first project.
+      - run: npm ci --legacy-peer-deps
       - run: npm run typecheck
       - run: npm test
+      - run: npx expo export --platform android --output-dir dist

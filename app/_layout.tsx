@@ -3,12 +3,13 @@ import "react-native-gesture-handler";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 
-import { RuntimeProvider } from "@/providers/runtime-provider";
+import { RuntimeProvider, useRuntime } from "@/providers/runtime-provider";
 import { colors } from "@/theme/tokens";
 
-export default function RootLayout() {
+function RootNavigation() {
+  const { themeId } = useRuntime();
   return (
-    <RuntimeProvider>
+    <>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
@@ -18,6 +19,14 @@ export default function RootLayout() {
           },
         }}
       />
+    </>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <RuntimeProvider>
+      <RootNavigation />
     </RuntimeProvider>
   );
 }

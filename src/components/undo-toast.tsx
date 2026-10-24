@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native'
 
 import { UndoService } from '@/services/undo-service'
@@ -7,34 +7,39 @@ import { colors, radius, spacing } from '@/theme/tokens'
 export function UndoToast({
   actor,
   onUndo,
+  themeId,
 }: {
   actor: { id: string; username: string } | null
   onUndo: () => void
+  themeId: string
 }) {
+  const styles = useMemo(makeStyles, [themeId])
   const [label, setLabel] = useState<string | null>(null)
   const fadeAnim = useRef(new Animated.Value(0)).current
 
   useEffect(() => {
-    const interval = setInterval(() => {
+    const unsubscribe = UndoService.subscribe(() => {
       const pending = UndoService.getPendingUndo()
-      if (pending && pending.label !== label) {
+      if (pending) {
         setLabel(pending.label)
         Animated.timing(fadeAnim, {
           toValue: 1,
           duration: 200,
           useNativeDriver: true,
         }).start()
-      } else if (!pending && label) {
+      } else {
         Animated.timing(fadeAnim, {
           toValue: 0,
           duration: 300,
           useNativeDriver: true,
-        }).start(() => setLabel(null))
+        }).start(({ finished }) => {
+          if (finished && !UndoService.getPendingUndo()) setLabel(null)
+        })
       }
-    }, 200)
+    })
 
-    return () => clearInterval(interval)
-  }, [label, fadeAnim])
+    return unsubscribe
+  }, [fadeAnim])
 
   async function handleUndo() {
     if (!actor) return
@@ -63,7 +68,8 @@ export function UndoToast({
   )
 }
 
-const styles = StyleSheet.create({
+function makeStyles() {
+  return StyleSheet.create({
   container: {
     position: 'absolute',
     bottom: 24,
@@ -101,4 +107,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 14,
   },
-})
+  })
+}

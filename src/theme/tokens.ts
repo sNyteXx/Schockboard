@@ -40,22 +40,22 @@ export const THEMES: Record<string, ColorTheme> = {
   },
   bvb09: {
     id: "bvb09",
-    label: "BVB 09",
-    bg: "#0a0a0a",
-    bgElevated: "#141414",
-    surface: "#1a1a1a",
-    surfaceSoft: "#222222",
+    label: "BVB 09 – Gelbe Wand",
+    bg: "#090B09",
+    bgElevated: "#111611",
+    surface: "#192019",
+    surfaceSoft: "#242B22",
     accent: "#FDE100",
-    accentStrong: "#FDE100",
-    text: "#f5f5f5",
-    muted: "#a0a0a0",
-    border: "rgba(253, 225, 0, 0.15)",
-    success: "#3bb273",
-    warning: "#FDE100",
-    danger: "#de675c",
-    info: "#8fa8ff",
-    tabBar: "#0a0a0a",
-    buttonPrimaryText: "#000000",
+    accentStrong: "#FFEA37",
+    text: "#F8FBF2",
+    muted: "#AAB5A4",
+    border: "rgba(253, 225, 0, 0.18)",
+    success: "#56D99A",
+    warning: "#FFCF53",
+    danger: "#FF7272",
+    info: "#91BFFF",
+    tabBar: "#0D110D",
+    buttonPrimaryText: "#090B09",
   },
   midnight: {
     id: "midnight",
@@ -78,7 +78,7 @@ export const THEMES: Record<string, ColorTheme> = {
   },
 };
 
-let activeTheme: ColorTheme = THEMES.original;
+let activeTheme: ColorTheme = THEMES.bvb09;
 
 export function setActiveTheme(themeId: string) {
   activeTheme = THEMES[themeId] ?? THEMES.original;
@@ -95,7 +95,7 @@ export function getActiveTheme() {
 }
 
 // Mutable color bag – keys are overwritten by setActiveTheme()
-export const colors: ColorTheme = { ...THEMES.original };
+export const colors: ColorTheme = { ...THEMES.bvb09 };
 
 export const spacing = {
   xs: 8,

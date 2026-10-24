@@ -1,6 +1,7 @@
 import { ActivityIndicator } from "react-native";
 import { useEffect, useState } from "react";
 
+import { BrandHero } from "@/components/brand";
 import { Button, Card, EmptyState, Field, Notice, Screen, SectionTitle, Select, Split, Stack, StatCard, ListRow, Input } from "@/components/ui";
 import { formatCurrency } from "@/domain/format";
 import { cleanOptionalText, parseEuroToCents } from "@/domain/utils";
@@ -84,6 +85,7 @@ export default function CashboxScreen() {
     <Screen>
       <Stack>
         {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
+        <BrandHero title="Kasse & Schulden" subtitle="Zahlungen verbuchen und offene Beträge transparent im Blick behalten." themeId={runtime.themeId} />
         <Split>
           <StatCard label="Kassenstand" value={formatCurrency(data.data.cashbox.totalPaymentsCents)} hint="Bereits eingezahlt" />
           <StatCard label="Offene Schulden" value={formatCurrency(data.data.cashbox.totalOutstandingCents)} hint="Noch nicht in der Kasse" />

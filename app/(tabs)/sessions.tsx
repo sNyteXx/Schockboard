@@ -1,7 +1,8 @@
 import { useRouter } from "expo-router";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { BrandHero } from "@/components/brand";
 import { Badge, Button, Card, EmptyState, Field, Input, ListRow, Notice, Screen, SectionTitle, Split, Stack } from "@/components/ui";
 import { formatCurrency, formatDate, formatDateTime } from "@/domain/format";
 import { parseEuroToCents } from "@/domain/utils";
@@ -25,6 +26,14 @@ export default function SessionsScreen() {
   const [stake, setStake] = useState("1,00");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  // The configured default stake must be the starting value for new nights.
+  const configuredStake = data.data?.settings.defaultStakeCents;
+  useEffect(() => {
+    if (configuredStake !== undefined) {
+      setStake((configuredStake / 100).toFixed(2).replace(".", ","));
+    }
+  }, [configuredStake]);
 
   if (data.loading || !data.data || !runtime.account) {
     return (
@@ -76,6 +85,7 @@ export default function SessionsScreen() {
     <Screen>
       <Stack>
         {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
+        <BrandHero title="Spielabende" subtitle="Neue Runde starten, weiterspielen oder vergangene Abende ansehen." themeId={runtime.themeId} />
         <Split>
           <Card>
             <SectionTitle
@@ -143,25 +153,31 @@ export default function SessionsScreen() {
           <Stack>
             {data.data.sessions.length > 0 ? (
               data.data.sessions.map((session) => (
-                <Card key={session.id}>
-                  <SectionTitle
-                    eyebrow="Spielabend"
-                    title={session.title}
-                    aside={<Badge tone={session.status === "open" ? "success" : "default"}>{session.status === "open" ? "Offen" : "Abgeschlossen"}</Badge>}
-                  />
+                <Pressable
+                  key={session.id}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${session.title} öffnen`}
+                  onPress={() => router.push(`/session/${session.id}`)}
+                  style={({ pressed }) => ({
+                    borderRadius: radius.md,
+                    backgroundColor: colors.surface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    padding: spacing.md,
+                    gap: 7,
+                    opacity: pressed ? 0.7 : 1,
+                  })}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
+                    <View style={{ flex: 1 }}><Text style={{ color: colors.text, fontWeight: "800", fontSize: 17 }}>{session.title}</Text></View>
+                    <Badge tone={session.status === "open" ? "success" : "default"}>{session.status === "open" ? "LIVE" : "Beendet"}</Badge>
+                  </View>
                   <Text style={{ color: colors.muted }}>
-                    {formatDate(session.startedAt)}
-                    {session.closedAt ? ` bis ${formatDate(session.closedAt)}` : ""}
+                    {formatDate(session.startedAt)} · {session.lossCount} Verluste · {formatCurrency(session.stakeCents)} Einsatz
                   </Text>
-                  {isAdvanced ? (
-                    <Text style={{ color: colors.muted }}>
-                      {formatCurrency(session.stakeCents)} Einsatz · {session.lossCount} Verluste · {formatCurrency(session.totalAbsenceCents)} Abwesenheit
-                    </Text>
-                  ) : null}
-                  <Button tone="secondary" onPress={() => router.push(`/session/${session.id}`)}>
-                    Öffnen
-                  </Button>
-                </Card>
+                  {isAdvanced ? <Text style={{ color: colors.muted }}>Abwesenheit: {formatCurrency(session.totalAbsenceCents)}</Text> : null}
+                  <Text style={{ color: colors.accentStrong, fontWeight: "800" }}>Ansehen →</Text>
+                </Pressable>
               ))
             ) : (
               <EmptyState>Es wurden noch keine Spielabende erfasst.</EmptyState>

@@ -1,4 +1,4 @@
-import { calculateAbsenceAverageCents, sortDebtors } from '@/domain/ledger'
+import { calculateAbsenceAverageCents, getVoidedLossCorrectionCents, sortDebtors } from '@/domain/ledger'
 import { SCHOCK_RULE_PROFILE } from '@/domain/rules'
 import type {
   AbsencePenaltyMode,
@@ -17,7 +17,7 @@ import type {
 } from '@/domain/types'
 import { nowIso, slugify } from '@/domain/utils'
 import { ensureDatabaseReady } from '@/db/bootstrap'
-import { sqliteAll, sqliteGet, sqliteRun } from '@/db/client'
+import { getSqlite, sqliteAll, sqliteGet, sqliteRun } from '@/db/client'
 import { createId } from '@/services/id'
 
 type RawPlayerDebtRow = {
@@ -353,25 +353,20 @@ export function deletePlayer(input: { actor: Actor; playerId: string }) {
     )
   }
 
-  sqliteRun('DELETE FROM loss_entries WHERE player_id = $playerId', { $playerId: input.playerId })
-  sqliteRun('DELETE FROM absence_charges WHERE player_id = $playerId', {
-    $playerId: input.playerId,
-  })
-  sqliteRun('DELETE FROM payments WHERE player_id = $playerId', { $playerId: input.playerId })
-  sqliteRun('DELETE FROM corrections WHERE player_id = $playerId', { $playerId: input.playerId })
-  sqliteRun('DELETE FROM session_attendance WHERE player_id = $playerId', {
-    $playerId: input.playerId,
-  })
-  sqliteRun('DELETE FROM players WHERE id = $playerId', { $playerId: input.playerId })
-
-  createAuditEvent({
-    actorAccountId: input.actor.accountId,
-    entityType: 'player',
-    entityId: input.playerId,
-    eventType: 'player.deleted',
-    payload: {
-      name: existing.name,
-    },
+  getSqlite().withTransactionSync(() => {
+    sqliteRun('DELETE FROM loss_entries WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM absence_charges WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM payments WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM corrections WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM session_attendance WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM players WHERE id = $playerId', { $playerId: input.playerId })
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'player',
+      entityId: input.playerId,
+      eventType: 'player.deleted',
+      payload: { name: existing.name },
+    })
   })
 }
 
@@ -1143,6 +1138,8 @@ export function addLossEntry(input: {
       note: input.note,
     },
   })
+
+  return entryId
 }
 
 export function addBeerRoundEntry(input: {
@@ -1210,9 +1207,11 @@ export function addBeerRoundEntry(input: {
       isBeerRound: true,
     },
   })
+
+  return entryId
 }
 
-export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerId: string }) {
+export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerId: string; entryId?: string }) {
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     { $sessionId: input.sessionId }
@@ -1232,12 +1231,15 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
       SELECT id, amount_cents, note, is_beer_round
       FROM loss_entries
       WHERE session_id = $sessionId AND player_id = $playerId
-      ORDER BY created_at DESC
+        AND (($entryId IS NOT NULL AND id = $entryId)
+          OR ($entryId IS NULL AND is_beer_round = 0))
+      ORDER BY created_at DESC, rowid DESC
       LIMIT 1
     `,
     {
       $sessionId: input.sessionId,
       $playerId: input.playerId,
+      $entryId: input.entryId ?? null,
     }
   )
 
@@ -1247,42 +1249,45 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
 
   const lossType = lastLoss.is_beer_round ? 'Bierrunde' : 'Verlust'
 
-  sqliteRun('DELETE FROM loss_entries WHERE id = $id', { $id: lastLoss.id })
-
-  // Insert a negative correction so it shows in the history log
   const correctionId = createId('correction')
   const playerRow = sqliteGet<{ name: string }>('SELECT name FROM players WHERE id = $id', {
     $id: input.playerId,
   })
-  sqliteRun(
-    `
-      INSERT INTO corrections (id, player_id, session_id, amount_cents, reason, created_by_account_id, created_at)
-      VALUES ($id, $playerId, $sessionId, $amountCents, $reason, $createdByAccountId, $createdAt)
-    `,
-    {
-      $id: correctionId,
-      $playerId: input.playerId,
-      $sessionId: input.sessionId,
-      $amountCents: -lastLoss.amount_cents,
-      $reason: `Korrektur: ${lossType} von ${playerRow?.name ?? 'Spieler'} gelöscht (−${(lastLoss.amount_cents / 100).toFixed(2).replace('.', ',')} €)`,
-      $createdByAccountId: input.actor.accountId,
-      $createdAt: nowIso(),
-    }
-  )
+  getSqlite().withTransactionSync(() => {
+    sqliteRun('DELETE FROM loss_entries WHERE id = $id', { $id: lastLoss.id })
 
-  createAuditEvent({
-    actorAccountId: input.actor.accountId,
-    entityType: 'loss',
-    entityId: lastLoss.id,
-    sessionId: input.sessionId,
-    eventType: lastLoss.is_beer_round ? 'beerround.deleted' : 'loss.deleted',
-    payload: {
-      playerId: input.playerId,
-      amountCents: lastLoss.amount_cents,
-      note: lastLoss.note,
-      isBeerRound: Boolean(lastLoss.is_beer_round),
-      correctionId,
-    },
+    // This row documents the reversal. Removing the original loss already
+    // cancels its amount; another negative correction would double-subtract.
+    sqliteRun(
+      `
+        INSERT INTO corrections (id, player_id, session_id, amount_cents, reason, created_by_account_id, created_at)
+        VALUES ($id, $playerId, $sessionId, $amountCents, $reason, $createdByAccountId, $createdAt)
+      `,
+      {
+        $id: correctionId,
+        $playerId: input.playerId,
+        $sessionId: input.sessionId,
+        $amountCents: getVoidedLossCorrectionCents(),
+        $reason: `Storniert: ${lossType} von ${playerRow?.name ?? 'Spieler'} (${(lastLoss.amount_cents / 100).toFixed(2).replace('.', ',')} €)`,
+        $createdByAccountId: input.actor.accountId,
+        $createdAt: nowIso(),
+      }
+    )
+
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'loss',
+      entityId: lastLoss.id,
+      sessionId: input.sessionId,
+      eventType: lastLoss.is_beer_round ? 'beerround.deleted' : 'loss.deleted',
+      payload: {
+        playerId: input.playerId,
+        amountCents: lastLoss.amount_cents,
+        note: lastLoss.note,
+        isBeerRound: Boolean(lastLoss.is_beer_round),
+        correctionId,
+      },
+    })
   })
 }
 
@@ -1371,6 +1376,9 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
     totalPresentCoreLossCents = rows.reduce((sum, row) => sum + row.amount_cents, 0)
   }
 
+  // Close and assess absence penalties atomically: a crash cannot leave a
+  // partially charged, still-open evening behind.
+  getSqlite().withTransactionSync(() => {
   if (!absenceReason && absentCoreIds.length > 0 && totalPresentCoreLossCents > 0) {
     const averageCents = calculateAbsenceAverageCents(
       totalPresentCoreLossCents,
@@ -1461,6 +1469,7 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
       absenceChargesSkipped: skippedAbsenceCharges,
       skipReason: absenceReason,
     },
+  })
   })
 
   return {

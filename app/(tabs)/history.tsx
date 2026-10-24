@@ -1,6 +1,7 @@
 import { ActivityIndicator } from 'react-native'
 import { useEffect, useState } from 'react'
 
+import { BrandHero } from '@/components/brand'
 import {
   Button,
   Card,
@@ -104,6 +105,7 @@ export default function HistoryScreen() {
         {runtime.flash ? (
           <Notice message={runtime.flash.message} type={runtime.flash.type} />
         ) : null}
+        <BrandHero title="Spielchronik" subtitle="Verluste, Bierrunden, Zahlungen und Korrekturen nachvollziehen." themeId={runtime.themeId} />
         <Split>
           {isAdvanced ? (
             <Card>
@@ -136,9 +138,7 @@ export default function HistoryScreen() {
                   ]}
                 />
               </Field>
-              <Button tone="secondary" onPress={() => null}>
-                Filter aktiv
-              </Button>
+              <EmptyState>Filter werden unmittelbar angewendet.</EmptyState>
             </Card>
           ) : null}
 

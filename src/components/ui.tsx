@@ -1,5 +1,5 @@
 import { Picker } from "@react-native-picker/picker";
-import { forwardRef, useMemo } from "react";
+import { Children, forwardRef, useMemo } from "react";
 import {
   Pressable,
   ScrollView,
@@ -20,17 +20,21 @@ import { useDeviceLayout } from "@/hooks/use-device-layout";
 function makeStyles() {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: colors.bg },
-    scroll: { padding: spacing.md, gap: spacing.md },
+    scroll: { width: "100%", maxWidth: 1480, alignSelf: "center", padding: spacing.md, paddingBottom: spacing.xxl, gap: spacing.md },
+    scrollTablet: { paddingHorizontal: spacing.xl, paddingVertical: spacing.lg, gap: spacing.lg },
+    glow: { position: "absolute", top: -145, right: -100, width: 340, height: 340, borderRadius: 170, backgroundColor: colors.accent, opacity: 0.035 },
     stack: { gap: spacing.md },
     split: { gap: spacing.md },
-    splitTablet: { flexDirection: "row", alignItems: "flex-start" },
+    splitTablet: { flexDirection: "row", alignItems: "stretch" },
+    splitItem: { flex: 1, minWidth: 0 },
     card: {
       gap: spacing.md,
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: radius.xl,
+      borderRadius: radius.lg,
       backgroundColor: colors.bgElevated,
       padding: spacing.lg,
+      minWidth: 0,
     },
     cardAccent: { backgroundColor: colors.surface },
     sectionHeader: {
@@ -43,11 +47,11 @@ function makeStyles() {
     eyebrow: {
       color: colors.accentStrong,
       textTransform: "uppercase",
-      letterSpacing: 1.5,
-      fontSize: 12,
-      fontWeight: "700",
+      letterSpacing: 2,
+      fontSize: 11,
+      fontWeight: "900",
     },
-    sectionTitle: { color: colors.text, fontSize: 28, fontFamily: "serif" },
+    sectionTitle: { color: colors.text, fontSize: 25, fontWeight: "900", letterSpacing: -0.7 },
     badge: {
       borderRadius: radius.pill,
       paddingHorizontal: spacing.sm,
@@ -57,12 +61,12 @@ function makeStyles() {
       overflow: "hidden",
     },
     statLabel: { color: colors.muted, fontSize: 14 },
-    statValue: { color: colors.text, fontSize: 26, fontWeight: "700" },
+    statValue: { color: colors.text, fontSize: 29, fontWeight: "900", letterSpacing: -0.5 },
     button: {
-      minHeight: 48,
+      minHeight: 52,
       alignItems: "center",
       justifyContent: "center",
-      borderRadius: radius.pill,
+      borderRadius: radius.md,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
@@ -83,7 +87,7 @@ function makeStyles() {
     input: {
       borderWidth: 1,
       borderColor: colors.border,
-      borderRadius: radius.md,
+      borderRadius: radius.sm,
       backgroundColor: colors.surfaceSoft,
       color: colors.text,
       minHeight: 52,
@@ -145,9 +149,13 @@ const badgeToneStyles = StyleSheet.create({
 
 export function Screen({ children }: { children: React.ReactNode }) {
   const styles = useStyles();
+  const { isTablet } = useDeviceLayout();
   return (
     <SafeAreaView style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.scroll}>{children}</ScrollView>
+      <View pointerEvents="none" style={styles.glow} />
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, isTablet && styles.scrollTablet]}>
+        {children}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -160,7 +168,14 @@ export function Stack({ children }: { children: React.ReactNode }) {
 export function Split({ children }: { children: React.ReactNode }) {
   const styles = useStyles();
   const { isTablet } = useDeviceLayout();
-  return <View style={[styles.split, isTablet && styles.splitTablet]}>{children}</View>;
+  if (!isTablet) return <View style={styles.split}>{children}</View>;
+  return (
+    <View style={[styles.split, styles.splitTablet]}>
+      {Children.toArray(children).map((child, i) => (
+        <View key={i} style={styles.splitItem}>{child}</View>
+      ))}
+    </View>
+  );
 }
 
 export function Card({

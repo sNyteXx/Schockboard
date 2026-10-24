@@ -1,4 +1,4 @@
-# Schockboard APK
+# Schockboard 2.0 APK
 
 Schockboard ist eine Android-App zur Verwaltung von Spielabenden, Verlusten und offenen Beträgen in der Runde.
 Die App läuft vollständig lokal auf dem Gerät (SQLite), ohne Cloud-Backend.
@@ -8,6 +8,9 @@ Die App läuft vollständig lokal auf dem Gerät (SQLite), ohne Cloud-Backend.
 - Kein Login erforderlich
 - APK ist als offizielles GitHub-Release verfügbar
 - Fokus auf schnelle Bedienung während des Spielabends
+- Adaptives Live-Spielbrett für Android-Smartphones und -Tablets (Hoch-/Querformat)
+- BVB-09-Fan-Theme mit lokal gerendertem Rundemblem (keine Drittanbieter-Grafikdatei)
+- Vollständiger SQLite-Export und überprüfte Wiederherstellung über den Android-Dateiauswahldialog
 
 ## Funktionsübersicht
 
@@ -25,11 +28,13 @@ Die App läuft vollständig lokal auf dem Gerät (SQLite), ohne Cloud-Backend.
 - Anwesenheit pro Spieler direkt umschalten
 - Gäste spontan zum laufenden Abend hinzufügen
 - Spielabend abschließen
+- Große Spieler-Kacheln mit direkter Schnellbuchung, Anwesenheit und Live-Feed
 
 ### Verluste & Schnellbuchung
 
 - Verluste per Schnellbuttons (+ / -) erfassen
 - Letzten Verlust pro Spieler rückgängig machen
+- Storno entfernt den Verlust genau einmal; bestehende doppelte Korrekturen werden durch Migration v6 bereinigt
 - Verluste optional mit Notiz dokumentieren
 
 ### Bierrunde (Sonderposten)
@@ -67,6 +72,13 @@ Die App läuft vollständig lokal auf dem Gerät (SQLite), ohne Cloud-Backend.
 - Lokale Datenhaltung mit SQLite
 - Klare Trennung von UI, Domain-Logik und Datenzugriff
 - Robuste Domain-Logik mit automatisierten Tests
+- Sicherungsformat: original SQLite-Datenbank, lokal exportiert; vor Restore werden SQLite-Integrität und Schockboard-Schema geprüft
+
+## Schockboard 2.0 (WIP)
+
+Die Hauptoberfläche ist für Touch-Interaktion neu aufgebaut. Im breiten Tablet-Fenster gibt es ein Spielerbrett links und Aktions-/Verlaufsbereiche rechts; auf schmalen Displays werden sie untereinander angeordnet. Im Tabletmodus sitzt die Navigation als seitliche Leiste.
+
+Der BVB-09-Look ist ein in React Native gezeichnetes Fan-Design und kein offiziell lizenziertes Vereinslogo. Das Paket bleibt `de.schockboard.apk`. Für ein direktes APK-Update muss **auch derselbe Android-Signaturschlüssel wie bei v1.1.0** verwendet werden; andernfalls ist ein Gerätewechsel per vorher exportierter SQLite-Sicherung nötig. Vor realen Updates die Migration auf einem Testgerät validieren.
 
 ## Release
 

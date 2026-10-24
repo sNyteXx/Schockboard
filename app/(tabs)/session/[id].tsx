@@ -1,7 +1,9 @@
 import { useLocalSearchParams } from 'expo-router'
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native'
 
+import { BrandHero } from '@/components/brand'
+import { PlayerBoard, type BoardPlayer } from '@/components/player-board'
 import {
   Badge,
   Button,
@@ -14,13 +16,14 @@ import {
   Screen,
   SectionTitle,
   Select,
-  Split,
   Stack,
+  StatCard,
 } from '@/components/ui'
 import { formatCurrency, formatDateTime } from '@/domain/format'
 import { describeHistoryEntry } from '@/domain/history'
 import { cleanOptionalText, parseEuroToCents } from '@/domain/utils'
 import { useAsyncResource } from '@/hooks/use-async-resource'
+import { useDeviceLayout } from '@/hooks/use-device-layout'
 import { useRuntime } from '@/providers/runtime-provider'
 import { SessionService } from '@/services/session-service'
 import { colors, radius, spacing } from '@/theme/tokens'
@@ -28,11 +31,8 @@ import { colors, radius, spacing } from '@/theme/tokens'
 export default function SessionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const runtime = useRuntime()
-  const quickStyles = useQuickStyles()
-  const detail = useAsyncResource(
-    () => SessionService.getSessionDetail(id),
-    [runtime.dataVersion, id]
-  )
+  const { isWide, isTablet } = useDeviceLayout()
+  const detail = useAsyncResource(() => SessionService.getSessionDetail(id), [runtime.dataVersion, id])
   const [stake, setStake] = useState('1,00')
   const [guestName, setGuestName] = useState('')
   const [playerId, setPlayerId] = useState('')
@@ -40,553 +40,341 @@ export default function SessionDetailScreen() {
   const [beerAmount, setBeerAmount] = useState('5,00')
   const [beerPlayerId, setBeerPlayerId] = useState('')
   const [beerNote, setBeerNote] = useState('')
+  const [showMore, setShowMore] = useState(false)
+
+  const sessionStake = detail.data?.session.stakeCents
+  useEffect(() => {
+    if (sessionStake !== undefined) setStake((sessionStake / 100).toFixed(2).replace('.', ','))
+  }, [sessionStake])
 
   useEffect(() => {
-    if (!detail.data) {
-      return
-    }
-
-    setStake((detail.data.session.stakeCents / 100).toFixed(2).replace('.', ','))
-    setPlayerId(detail.data.availablePresentPlayers[0]?.id ?? '')
-    setBeerPlayerId(detail.data.availablePresentPlayers[0]?.id ?? '')
+    if (!detail.data) return
+    const available = detail.data.availablePresentPlayers
+    setPlayerId((previous) => available.some((player) => player.id === previous) ? previous : available[0]?.id ?? '')
+    setBeerPlayerId((previous) => available.some((player) => player.id === previous) ? previous : available[0]?.id ?? '')
   }, [detail.data])
 
-  if (detail.loading || !runtime.account) {
-    return (
-      <Screen>
-        <ActivityIndicator color={colors.accentStrong} size="large" />
-      </Screen>
-    )
+  if (detail.loading && !detail.data || !runtime.account) {
+    return <Screen><ActivityIndicator color={colors.accentStrong} size="large" /></Screen>
+  }
+
+  if (detail.error) {
+    return <Screen><Card><Notice type="error" message={detail.error.message} /><Button onPress={detail.reload}>Erneut versuchen</Button></Card></Screen>
   }
 
   if (!detail.data) {
-    return (
-      <Screen>
-        <Card>
-          <EmptyState>Spielabend nicht gefunden.</EmptyState>
-        </Card>
-      </Screen>
+    return <Screen><Card><EmptyState>Spielabend nicht gefunden.</EmptyState></Card></Screen>
+  }
+
+  const session = detail.data.session
+  const isClosed = session.status === 'closed'
+  const isAdvanced = runtime.viewMode === 'advanced'
+  const presentCoreCount = detail.data.attendance.filter((row) => row.present && row.isCore).length
+  const absentCoreCount = detail.data.attendance.filter((row) => !row.present && row.isCore).length
+  const normalLosses = detail.data.losses.filter((loss) => !loss.isBeerRound)
+  const totalTodayCents = detail.data.losses.reduce((total, loss) => total + loss.amountCents, 0)
+  const players: BoardPlayer[] = detail.data.availablePresentPlayers.map((player) => {
+    const playerLosses = normalLosses.filter((loss) => loss.playerId === player.id)
+    return {
+      id: player.id,
+      name: player.name,
+      isCore: player.isCore,
+      lossCount: playerLosses.length,
+      todayCents: detail.data!.losses.filter((loss) => loss.playerId === player.id).reduce((total, loss) => total + loss.amountCents, 0),
+    }
+  })
+
+  const actor = { accountId: runtime.account.id, username: runtime.account.username }
+
+  function showError(error: unknown, fallback: string) {
+    runtime.setFlash({ type: 'error', message: error instanceof Error ? error.message : fallback })
+  }
+
+  function handleStakeUpdate() {
+    try {
+      SessionService.updateSessionStake({ actor, sessionId: session.id, stakeCents: parseEuroToCents(stake) })
+      runtime.bumpDataVersion()
+      runtime.setFlash({ type: 'success', message: 'Einsatz aktualisiert.' })
+    } catch (error) {
+      showError(error, 'Einsatz konnte nicht aktualisiert werden.')
+    }
+  }
+
+  function closeSession() {
+    try {
+      const result = SessionService.closeSession({ actor, sessionId: session.id })
+      runtime.bumpDataVersion()
+      runtime.setFlash({
+        type: 'success',
+        message: result.reason === 'disabled'
+          ? 'Spielabend abgeschlossen – automatische Abwesenheitsbeträge sind deaktiviert.'
+          : result.reason === 'no-present-core'
+            ? 'Spielabend abgeschlossen – keine Zuschläge ohne anwesende Stammspieler.'
+            : 'Spielabend abgeschlossen.',
+      })
+    } catch (error) {
+      showError(error, 'Spielabend konnte nicht abgeschlossen werden.')
+    }
+  }
+
+  function confirmClose() {
+    Alert.alert(
+      'Spielabend abschließen?',
+      `${normalLosses.length} Verluste und ${detail.data!.losses.length - normalLosses.length} Bierrunden wurden erfasst. ` +
+      `${absentCoreCount} Stammspieler sind abwesend. Je nach Hausregel können beim Abschluss Zuschläge entstehen. ` +
+      'Danach können keine Buchungen mehr vorgenommen werden.',
+      [
+        { text: 'Weiterspielen', style: 'cancel' },
+        { text: 'Abschließen', style: 'destructive', onPress: closeSession },
+      ],
     )
   }
 
-  const isClosed = detail.data.session.status === 'closed'
-  const presentCoreCount = detail.data.attendance.filter((row) => row.present && row.isCore).length
-  const skippedAbsenceCharges = isClosed && presentCoreCount === 0
-  const isAdvanced = runtime.viewMode === 'advanced'
-
-  // Count losses per player for showing the minus button
-  const lossCountByPlayer: Record<string, number> = {}
-  for (const loss of detail.data.losses) {
-    lossCountByPlayer[loss.playerId] = (lossCountByPlayer[loss.playerId] ?? 0) + 1
-  }
-
-  async function handleStakeUpdate() {
+  function handleGuest() {
     try {
-      SessionService.updateSessionStake({
-        actor: {
-          accountId: runtime.account!.id,
-          username: runtime.account!.username,
-        },
-        sessionId: detail.data!.session.id,
-        stakeCents: parseEuroToCents(stake),
-      })
-      runtime.bumpDataVersion()
-      runtime.setFlash({
-        type: 'success',
-        message: 'Einsatz aktualisiert.',
-      })
-    } catch (caught) {
-      runtime.setFlash({
-        type: 'error',
-        message:
-          caught instanceof Error ? caught.message : 'Einsatz konnte nicht aktualisiert werden.',
-      })
-    }
-  }
-
-  async function handleClose() {
-    try {
-      const result = SessionService.closeSession({
-        actor: {
-          accountId: runtime.account!.id,
-          username: runtime.account!.username,
-        },
-        sessionId: detail.data!.session.id,
-      })
-      runtime.bumpDataVersion()
-      runtime.setFlash({
-        type: 'success',
-        message:
-          result.reason === 'disabled'
-            ? 'Spielabend abgeschlossen. Die Abwesenheitspenalty ist in den Einstellungen deaktiviert.'
-            : result.reason === 'no-present-core'
-              ? 'Spielabend abgeschlossen. Keine automatischen Zuschläge, weil kein Stammspieler anwesend war.'
-              : 'Spielabend abgeschlossen.',
-      })
-    } catch (caught) {
-      runtime.setFlash({
-        type: 'error',
-        message:
-          caught instanceof Error
-            ? caught.message
-            : 'Spielabend konnte nicht abgeschlossen werden.',
-      })
-    }
-  }
-
-  async function handleGuest() {
-    try {
-      SessionService.addGuestToSession({
-        actor: {
-          accountId: runtime.account!.id,
-          username: runtime.account!.username,
-        },
-        sessionId: detail.data!.session.id,
-        name: guestName.trim(),
-      })
+      SessionService.addGuestToSession({ actor, sessionId: session.id, name: guestName.trim() })
       runtime.bumpDataVersion()
       setGuestName('')
-    } catch (caught) {
-      runtime.setFlash({
-        type: 'error',
-        message: caught instanceof Error ? caught.message : 'Gast konnte nicht hinzugefügt werden.',
-      })
+    } catch (error) {
+      showError(error, 'Gast konnte nicht hinzugefügt werden.')
     }
   }
 
-  async function handleLoss() {
+  function recordLoss(targetPlayerId: string, entryNote: string | null) {
     try {
-      SessionService.addLossEntry({
-        actor: {
-          accountId: runtime.account!.id,
-          username: runtime.account!.username,
-        },
-        sessionId: detail.data!.session.id,
-        playerId,
-        note: cleanOptionalText(note),
-      })
+      const entryId = SessionService.addLossEntry({ actor, sessionId: session.id, playerId: targetPlayerId, note: entryNote })
       runtime.bumpDataVersion()
+      runtime.scheduleUndo({ type: 'loss', sessionId: session.id, playerId: targetPlayerId, entryId, label: 'Verlust gebucht' })
       setNote('')
-      runtime.scheduleUndo({
-        type: 'loss',
-        sessionId: detail.data!.session.id,
-        playerId,
-        label: 'Verlust gebucht',
-      })
-    } catch (caught) {
-      runtime.setFlash({
-        type: 'error',
-        message: caught instanceof Error ? caught.message : 'Verlust konnte nicht gebucht werden.',
-      })
+    } catch (error) {
+      showError(error, 'Verlust konnte nicht gebucht werden.')
     }
   }
 
-  async function handleQuickLoss(targetPlayerId: string) {
+  function removeLastLoss(targetPlayerId: string) {
     try {
-      SessionService.addLossEntry({
-        actor: {
-          accountId: runtime.account!.id,
-          username: runtime.account!.username,
-        },
-        sessionId: detail.data!.session.id,
-        playerId: targetPlayerId,
-        note: null,
-      })
+      SessionService.deleteLastLoss({ actor, sessionId: session.id, playerId: targetPlayerId })
       runtime.bumpDataVersion()
-      runtime.scheduleUndo({
-        type: 'loss',
-        sessionId: detail.data!.session.id,
-        playerId: targetPlayerId,
-        label: 'Verlust gebucht',
-      })
-    } catch (caught) {
-      runtime.setFlash({
-        type: 'error',
-        message: caught instanceof Error ? caught.message : 'Verlust konnte nicht gebucht werden.',
-      })
+      runtime.cancelUndo()
+      runtime.setFlash({ type: 'success', message: 'Letzter Verlust storniert.' })
+    } catch (error) {
+      showError(error, 'Verlust konnte nicht storniert werden.')
     }
   }
 
-  async function handleUndoLoss(targetPlayerId: string) {
+  function toggleAttendance(targetPlayerId: string) {
     try {
-      SessionService.deleteLastLoss({
-        actor: {
-          accountId: runtime.account!.id,
-          username: runtime.account!.username,
-        },
-        sessionId: detail.data!.session.id,
-        playerId: targetPlayerId,
-      })
+      SessionService.toggleAttendance({ actor, sessionId: session.id, playerId: targetPlayerId })
       runtime.bumpDataVersion()
-    } catch (caught) {
-      runtime.setFlash({
-        type: 'error',
-        message: caught instanceof Error ? caught.message : 'Verlust konnte nicht gelöscht werden.',
-      })
+    } catch (error) {
+      showError(error, 'Anwesenheit konnte nicht geändert werden.')
     }
   }
 
-  async function handleToggleAttendance(targetPlayerId: string) {
+  function recordBeerRound() {
     try {
-      SessionService.toggleAttendance({
-        actor: {
-          accountId: runtime.account!.id,
-          username: runtime.account!.username,
-        },
-        sessionId: detail.data!.session.id,
-        playerId: targetPlayerId,
-      })
-      runtime.bumpDataVersion()
-    } catch (caught) {
-      runtime.setFlash({
-        type: 'error',
-        message:
-          caught instanceof Error ? caught.message : 'Anwesenheit konnte nicht geändert werden.',
-      })
-    }
-  }
-
-  async function handleBeerRound() {
-    try {
-      SessionService.addBeerRoundEntry({
-        actor: {
-          accountId: runtime.account!.id,
-          username: runtime.account!.username,
-        },
-        sessionId: detail.data!.session.id,
-        playerId: beerPlayerId,
-        amountCents: parseEuroToCents(beerAmount),
-        note: cleanOptionalText(beerNote),
+      const entryId = SessionService.addBeerRoundEntry({
+        actor, sessionId: session.id, playerId: beerPlayerId,
+        amountCents: parseEuroToCents(beerAmount), note: cleanOptionalText(beerNote),
       })
       runtime.bumpDataVersion()
       setBeerNote('')
-      runtime.scheduleUndo({
-        type: 'beerround',
-        sessionId: detail.data!.session.id,
-        playerId: beerPlayerId,
-        label: 'Bierrunde gebucht',
-      })
-    } catch (caught) {
-      runtime.setFlash({
-        type: 'error',
-        message:
-          caught instanceof Error ? caught.message : 'Bierrunde konnte nicht gebucht werden.',
-      })
+      runtime.scheduleUndo({ type: 'beerround', sessionId: session.id, playerId: beerPlayerId, entryId, label: 'Bierrunde gebucht' })
+    } catch (error) {
+      showError(error, 'Bierrunde konnte nicht gebucht werden.')
     }
   }
+
+  const presentCount = detail.data.attendance.filter((row) => row.present).length
+  const timeline = detail.data.timeline.filter((entry) => entry.kind === 'loss' || entry.kind === 'beerround' || entry.kind === 'correction')
 
   return (
     <Screen>
       <Stack>
-        {runtime.flash ? (
-          <Notice message={runtime.flash.message} type={runtime.flash.type} />
-        ) : null}
+        {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
 
-        <Card tone="accent">
-          <SectionTitle
-            eyebrow="Spielabend"
-            title={detail.data.session.title}
-            aside={
-              <Badge tone={isClosed ? 'default' : 'success'}>
-                {isClosed ? 'Abgeschlossen' : 'Offen'}
-              </Badge>
-            }
-          />
-          <Text style={{ color: colors.muted }}>
-            Start {formatDateTime(detail.data.session.startedAt)}
-            {detail.data.session.closedAt
-              ? ` · Ende ${formatDateTime(detail.data.session.closedAt)}`
-              : ''}
-          </Text>
-          {isAdvanced && detail.data.session.notes ? (
-            <Text style={{ color: colors.muted }}>{detail.data.session.notes}</Text>
-          ) : null}
-          <Split>
-            <Field label="Einsatz (€)">
-              <Input
-                value={stake}
-                onChangeText={setStake}
-                keyboardType="decimal-pad"
-                editable={!isClosed}
+        <BrandHero
+          themeId={runtime.themeId}
+          title={session.title}
+          subtitle={`Seit ${formatDateTime(session.startedAt)}${session.closedAt ? ` · Ende ${formatDateTime(session.closedAt)}` : ''}`}
+          aside={<Badge tone={isClosed ? 'default' : 'success'}>{isClosed ? 'ABGESCHLOSSEN' : '● LIVE'}</Badge>}
+        />
+
+        {isTablet ? (
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <View style={{ flex: 1 }}><StatCard label="Am Tisch" value={`${presentCount}`} hint="Spieler anwesend" /></View>
+            <View style={{ flex: 1 }}><StatCard label="Verluste" value={`${normalLosses.length}`} hint={`${formatCurrency(session.stakeCents)} je Verlust`} /></View>
+            <View style={{ flex: 1 }}><StatCard label="Heute gebucht" value={formatCurrency(totalTodayCents)} hint="Inklusive Bierrunden" /></View>
+          </View>
+        ) : (
+          <View style={{ flexDirection: 'row', gap: spacing.xs }}>
+            <CompactMetric label="SPIELER" value={`${presentCount}`} />
+            <CompactMetric label="VERLUSTE" value={`${normalLosses.length}`} />
+            <CompactMetric label="BETRAG" value={formatCurrency(totalTodayCents)} />
+          </View>
+        )}
+
+        <View style={{ flexDirection: isWide ? 'row' : 'column', alignItems: 'stretch', gap: spacing.md }}>
+          <View style={{ flex: isWide ? 1.75 : undefined, minWidth: 0, gap: spacing.md }}>
+            <Card>
+              <PlayerBoard
+                players={players}
+                stakeCents={session.stakeCents}
+                isClosed={isClosed}
+                onAdd={(targetId) => recordLoss(targetId, null)}
+                onRemove={removeLastLoss}
               />
-            </Field>
-            <Button tone="secondary" onPress={handleStakeUpdate} disabled={isClosed}>
-              Einsatz speichern
-            </Button>
-          </Split>
-          {!isClosed ? (
-            <View style={{ gap: 12 }}>
-              <Button onPress={handleClose}>Abend abschließen</Button>
-              {presentCoreCount === 0 ? (
-                <Text style={{ color: colors.muted }}>
-                  Gerade ist kein Stammspieler anwesend. Der Abend kann trotzdem geschlossen werden,
-                  nur ohne automatische Zuschläge für Abwesende.
-                </Text>
-              ) : null}
-            </View>
-          ) : null}
-        </Card>
+            </Card>
 
-        <Split>
-          <Card>
-            <SectionTitle eyebrow="Anwesenheit" title="Wer ist heute da?" />
-            <Stack>
-              {detail.data.attendance.map((row) => (
-                <Button
-                  key={row.id}
-                  tone={row.present ? 'primary' : 'secondary'}
-                  onPress={() => void handleToggleAttendance(row.playerId)}
-                  disabled={isClosed}
-                >
-                  {row.playerName} · {row.isCore ? 'Stammrunde' : 'Gast'}
-                </Button>
-              ))}
-            </Stack>
             {!isClosed ? (
-              <Stack>
-                <Field label="Gast hinzufügen">
-                  <Input
-                    value={guestName}
-                    onChangeText={setGuestName}
-                    placeholder="Gast hinzufügen"
-                  />
-                </Field>
-                <Button tone="secondary" onPress={handleGuest}>
-                  Gast reinholen
-                </Button>
-              </Stack>
+              <Button tone="secondary" onPress={() => setShowMore((value) => !value)}>
+                {showMore ? 'Erweiterte Buchung schließen' : '⚙ Einsatz und erweiterte Buchung'}
+              </Button>
             ) : null}
-          </Card>
 
-          <Card>
-            <SectionTitle eyebrow="Verlustlog" title="Schnell buchen" />
-            {detail.data.availablePresentPlayers.length > 0 && !isClosed ? (
-              <Stack>
-                <Text style={{ color: colors.muted, fontSize: 13 }}>
-                  ＋ = {formatCurrency(detail.data.session.stakeCents)} buchen · − = letzten Verlust
-                  löschen
-                </Text>
-                <View style={quickStyles.grid}>
-                  {detail.data.availablePresentPlayers.map((player) => (
-                    <View key={player.id} style={quickStyles.playerRow}>
-                      <Pressable
-                        onPress={() => handleUndoLoss(player.id)}
-                        disabled={(lossCountByPlayer[player.id] ?? 0) === 0}
-                        style={({ pressed }) => [
-                          quickStyles.minusButton,
-                          (lossCountByPlayer[player.id] ?? 0) === 0 && quickStyles.disabledButton,
-                          pressed && quickStyles.quickButtonPressed,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            quickStyles.buttonIcon,
-                            (lossCountByPlayer[player.id] ?? 0) === 0 && quickStyles.disabledText,
-                          ]}
-                        >
-                          −
-                        </Text>
-                      </Pressable>
-                      <Text style={quickStyles.playerLabel}>
-                        {player.name}
-                        {(lossCountByPlayer[player.id] ?? 0) > 0
-                          ? ` (${lossCountByPlayer[player.id]})`
-                          : ''}
-                      </Text>
-                      <Pressable
-                        onPress={() => handleQuickLoss(player.id)}
-                        style={({ pressed }) => [
-                          quickStyles.plusButton,
-                          pressed && quickStyles.quickButtonPressed,
-                        ]}
-                      >
-                        <Text style={quickStyles.buttonIcon}>＋</Text>
-                      </Pressable>
-                    </View>
-                  ))}
-                </View>
-                {isAdvanced ? (
-                  <>
-                    <Field label="Verlierer">
-                      <Select
-                        selectedValue={playerId}
-                        onValueChange={setPlayerId}
-                        items={detail.data.availablePresentPlayers.map((player) => ({
-                          label: player.name,
-                          value: player.id,
-                        }))}
-                      />
+            {!isClosed && showMore ? (
+              <Card>
+                <SectionTitle eyebrow="Spielabend" title="Einsatz und Details" />
+                <Field label="Einsatz pro Verlust (€)">
+                  <Input value={stake} onChangeText={setStake} keyboardType="decimal-pad" />
+                </Field>
+                <Button tone="secondary" onPress={handleStakeUpdate}>Einsatz speichern</Button>
+                {isAdvanced && players.length > 0 ? (
+                  <Stack>
+                    <SectionTitle eyebrow="Buchung" title="Verlust mit Notiz" />
+                    <Field label="Spieler">
+                      <Select selectedValue={playerId} onValueChange={setPlayerId} items={players.map((player) => ({ value: player.id, label: player.name }))} />
                     </Field>
                     <Field label="Notiz">
-                      <Input
-                        value={note}
-                        onChangeText={setNote}
-                        placeholder="Schock Aus, General …"
-                      />
+                      <Input value={note} onChangeText={setNote} placeholder="Schock Aus, General …" />
                     </Field>
-                    <Button onPress={handleLoss}>Verlust mit Notiz buchen</Button>
-                  </>
+                    <Button onPress={() => recordLoss(playerId, cleanOptionalText(note))}>Verlust mit Notiz buchen</Button>
+                  </Stack>
                 ) : null}
-              </Stack>
-            ) : (
-              <EmptyState>
-                {isClosed ? 'Der Abend ist abgeschlossen.' : 'Markiere zuerst anwesende Spieler.'}
-              </EmptyState>
-            )}
-            <SectionTitle eyebrow="Letzte Buchungen" title="Verlust- & Korrekturlog" />
-            <Stack>
-              {detail.data.timeline.filter(
-                (e) => e.kind === 'loss' || e.kind === 'beerround' || e.kind === 'correction'
-              ).length > 0 ? (
-                detail.data.timeline
-                  .filter(
-                    (e) => e.kind === 'loss' || e.kind === 'beerround' || e.kind === 'correction'
-                  )
-                  .slice(0, 10)
-                  .map((entry) => (
+              </Card>
+            ) : null}
+          </View>
+
+          <View style={{ flex: isWide ? 1 : undefined, minWidth: 0, gap: spacing.md }}>
+            <Card>
+              <SectionTitle eyebrow="Aufstellung" title="Wer spielt mit?" aside={<Badge>{presentCount} / {detail.data.attendance.length}</Badge>} />
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs }}>
+                {detail.data.attendance.map((row) => (
+                  <Pressable
+                    key={row.id}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${row.playerName}: ${row.present ? 'anwesend' : 'abwesend'}`}
+                    accessibilityState={{ disabled: isClosed, selected: row.present }}
+                    disabled={isClosed}
+                    onPress={() => toggleAttendance(row.playerId)}
+                    style={({ pressed }) => ({
+                      borderRadius: radius.sm,
+                      borderWidth: 1,
+                      borderColor: row.present ? colors.accent : colors.border,
+                      backgroundColor: row.present ? colors.surfaceSoft : colors.bgElevated,
+                      paddingVertical: 10,
+                      paddingHorizontal: spacing.sm,
+                      opacity: pressed ? 0.65 : row.present ? 1 : 0.65,
+                      minHeight: 46,
+                      justifyContent: 'center',
+                    })}
+                  >
+                    <Text style={{ color: row.present ? colors.text : colors.muted, fontSize: 13, fontWeight: '800' }}>
+                      {row.present ? '●' : '○'} {row.playerName}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+              {!isClosed ? (
+                <View style={{ gap: spacing.sm }}>
+                  <Field label="Gast spontan hinzufügen">
+                    <Input value={guestName} onChangeText={setGuestName} placeholder="Name des Gasts" returnKeyType="done" />
+                  </Field>
+                  <Button tone="secondary" onPress={handleGuest} disabled={!guestName.trim()}>＋ Gast hinzufügen</Button>
+                </View>
+              ) : null}
+            </Card>
+
+            {!isClosed && players.length > 0 ? (
+              <Card>
+                <SectionTitle eyebrow="Sonderposten" title="Bierrunde" aside={<Badge tone="warning">🍺</Badge>} />
+                <Field label="Spieler">
+                  <Select selectedValue={beerPlayerId} onValueChange={setBeerPlayerId} items={players.map((player) => ({ label: player.name, value: player.id }))} />
+                </Field>
+                <Field label="Betrag (€)">
+                  <Input value={beerAmount} onChangeText={setBeerAmount} keyboardType="decimal-pad" />
+                </Field>
+                {isAdvanced ? (
+                  <Field label="Notiz"><Input value={beerNote} onChangeText={setBeerNote} placeholder="Optional" /></Field>
+                ) : null}
+                <Button onPress={recordBeerRound}>Bierrunde buchen</Button>
+                <Text style={{ color: colors.muted, fontSize: 12 }}>Bierrunden fließen nicht in den Abwesenheitsdurchschnitt ein.</Text>
+              </Card>
+            ) : null}
+
+            <Card>
+              <SectionTitle eyebrow="Live-Feed" title="Letzte Buchungen" />
+              {timeline.length ? (
+                <Stack>
+                  {timeline.slice(0, isWide ? 6 : 10).map((entry) => (
                     <ListRow
                       key={entry.id}
-                      title={`${entry.kind === 'correction' ? '↩ ' : entry.kind === 'beerround' ? '🍺 ' : ''}${entry.playerName ?? '–'}`}
-                      detail={`${formatDateTime(entry.createdAt)}${entry.message ? ` · ${entry.message}` : ''}`}
-                      value={
-                        entry.amountCents !== null
-                          ? formatCurrency(Math.abs(entry.amountCents))
-                          : undefined
-                      }
+                      title={`${entry.kind === 'beerround' ? '🍺 ' : entry.kind === 'correction' ? '↩ ' : ''}${entry.playerName ?? 'System'}`}
+                      detail={entry.message}
+                      value={entry.amountCents !== null ? formatCurrency(Math.abs(entry.amountCents)) : undefined}
                     />
-                  ))
-              ) : (
-                <EmptyState>Noch keine Buchungen erfasst.</EmptyState>
-              )}
-            </Stack>
-          </Card>
-        </Split>
+                  ))}
+                </Stack>
+              ) : <EmptyState>Noch keine Buchungen.</EmptyState>}
+            </Card>
+          </View>
+        </View>
 
-        {!isClosed && detail.data.availablePresentPlayers.length > 0 ? (
+        {!isClosed ? (
           <Card>
-            <SectionTitle eyebrow="Sonderposten" title="🍺 Bierrunde" />
-            <Stack>
-              <Text style={{ color: colors.muted, fontSize: 13 }}>
-                Bierrunden werden dem Spieler als Schulden zugewiesen, fließen aber nicht in den
-                Abwesenheitsdurchschnitt ein.
-              </Text>
-              <Field label="Spieler">
-                <Select
-                  selectedValue={beerPlayerId}
-                  onValueChange={setBeerPlayerId}
-                  items={detail.data.availablePresentPlayers.map((player) => ({
-                    label: player.name,
-                    value: player.id,
-                  }))}
-                />
-              </Field>
-              <Field label="Betrag (€)">
-                <Input value={beerAmount} onChangeText={setBeerAmount} keyboardType="decimal-pad" />
-              </Field>
-              <Field label="Notiz">
-                <Input
-                  value={beerNote}
-                  onChangeText={setBeerNote}
-                  placeholder="z. B. Runde für alle"
-                />
-              </Field>
-              <Button onPress={handleBeerRound}>🍺 Bierrunde buchen</Button>
-            </Stack>
+            <SectionTitle eyebrow="Abschluss" title="Spielabend beenden" aside={<Badge tone="warning">{absentCoreCount} abwesend</Badge>} />
+            <Text style={{ color: colors.muted, lineHeight: 21 }}>
+              Beim Abschluss werden die vereinbarten Zuschläge für abwesende Stammspieler berechnet. Ein Bestätigungsdialog zeigt dir die Folgen vorher an.
+            </Text>
+            {presentCoreCount === 0 ? <EmptyState>Aktuell ist kein Stammspieler anwesend – daher entstehen keine automatischen Abwesenheitszuschläge.</EmptyState> : null}
+            <Button tone="secondary" onPress={confirmClose}>Spielabend abschließen</Button>
           </Card>
         ) : null}
 
-        <Split>
-          <Card>
-            <SectionTitle eyebrow="Abwesenheit" title="Automatische Zuschläge" />
-            {detail.data.absences.length > 0 ? (
-              <Stack>
-                {detail.data.absences.map((absence) => (
-                  <ListRow
-                    key={absence.id}
-                    title={absence.playerName}
-                    detail={
-                      isAdvanced
-                        ? (absence.note ??
-                          `${formatCurrency(absence.averageBaseLossCents)} Gesamtverluste ÷ ${absence.averagePresentCoreCount} Stammspieler`)
-                        : undefined
-                    }
-                    value={formatCurrency(absence.amountCents)}
-                  />
-                ))}
-              </Stack>
-            ) : skippedAbsenceCharges ? (
-              <EmptyState>
-                Der Abend wurde ohne anwesenden Stammspieler abgeschlossen. Automatische Zuschläge
-                wurden deshalb übersprungen.
-              </EmptyState>
-            ) : (
-              <EmptyState>
-                Abwesenheitsbeträge entstehen erst beim Abschließen des Spielabends.
-              </EmptyState>
-            )}
-          </Card>
+        <Card>
+          <SectionTitle eyebrow="Abrechnung" title="Abwesenheit und Zuschläge" />
+          {detail.data.absences.length ? (
+            <Stack>
+              {detail.data.absences.map((entry) => (
+                <ListRow key={entry.id} title={entry.playerName} detail={isAdvanced ? entry.note : undefined} value={formatCurrency(entry.amountCents)} />
+              ))}
+            </Stack>
+          ) : (
+            <EmptyState>{isClosed ? 'Für diesen Abend wurden keine Abwesenheitszuschläge gebucht.' : 'Die endgültigen Zuschläge entstehen beim Abschließen.'}</EmptyState>
+          )}
+        </Card>
 
-          {isAdvanced ? (
-            <Card>
-              <SectionTitle eyebrow="Timeline" title="Alles zum Abend" />
-              <Stack>
-                {detail.data.timeline.map((entry) => {
-                  const display = describeHistoryEntry(entry, { hideSessionTitle: true })
-                  const detailText = [
-                    display.detail,
-                    entry.amountCents !== null ? formatCurrency(entry.amountCents) : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')
-                  return (
-                    <ListRow
-                      key={entry.id}
-                      title={display.title}
-                      detail={`${formatDateTime(entry.createdAt)} · ${detailText}`}
-                    />
-                  )
-                })}
-              </Stack>
-            </Card>
-          ) : null}
-        </Split>
+        {isAdvanced ? (
+          <Card>
+            <SectionTitle eyebrow="Protokoll" title="Alle Ereignisse" />
+            <Stack>
+              {detail.data.timeline.map((entry) => {
+                const display = describeHistoryEntry(entry, { hideSessionTitle: true })
+                return <ListRow key={entry.id} title={display.title} detail={`${formatDateTime(entry.createdAt)} · ${display.detail}`} value={entry.amountCents !== null ? formatCurrency(entry.amountCents) : undefined} />
+              })}
+            </Stack>
+          </Card>
+        ) : null}
       </Stack>
     </Screen>
   )
 }
 
-function useQuickStyles() {
-  return useMemo(
-    () =>
-      StyleSheet.create({
-        grid: { gap: spacing.sm },
-        playerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-        minusButton: {
-          width: 44,
-          height: 44,
-          borderRadius: radius.pill,
-          backgroundColor: colors.surfaceSoft,
-          borderWidth: 1,
-          borderColor: colors.border,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        plusButton: {
-          width: 44,
-          height: 44,
-          borderRadius: radius.pill,
-          backgroundColor: colors.surfaceSoft,
-          borderWidth: 1,
-          borderColor: colors.border,
-          alignItems: 'center',
-          justifyContent: 'center',
-        },
-        disabledButton: { opacity: 0.3 },
-        quickButtonPressed: { backgroundColor: colors.accent, transform: [{ scale: 0.95 }] },
-        buttonIcon: { color: colors.accentStrong, fontSize: 20, fontWeight: '800' },
-        disabledText: { color: colors.muted },
-        playerLabel: { color: colors.text, fontWeight: '700', fontSize: 15, flex: 1 },
-      }),
-    [colors.id]
+function CompactMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ flex: 1, minWidth: 0, paddingVertical: 10, paddingHorizontal: 8, borderRadius: radius.sm, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, alignItems: 'center', gap: 3 }}>
+      <Text style={{ color: colors.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1 }}>{label}</Text>
+      <Text style={{ color: colors.text, fontSize: 16, fontWeight: '900' }} numberOfLines={1} adjustsFontSizeToFit>{value}</Text>
+    </View>
   )
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { calculateAbsenceAverageCents, calculateOpenDebtCents, sortDebtors } from "@/domain/ledger";
+import { calculateAbsenceAverageCents, calculateOpenDebtCents, getVoidedLossCorrectionCents, sortDebtors } from "@/domain/ledger";
 
 describe("ledger", () => {
   it("calculates rounded absence averages", () => {
@@ -16,6 +16,14 @@ describe("ledger", () => {
         paymentCents: 500,
       }),
     ).toBe(1100);
+  });
+
+  it("does not double-subtract a deleted loss", () => {
+    const before = calculateOpenDebtCents({ lossCents: 100, absenceCents: 0, correctionCents: 0, paymentCents: 0 });
+    const after = calculateOpenDebtCents({ lossCents: 0, absenceCents: 0, correctionCents: getVoidedLossCorrectionCents(), paymentCents: 0 });
+    expect(before).toBe(100);
+    expect(after).toBe(0);
+    expect(before - after).toBe(100);
   });
 
   it("sorts debtors by debt desc and name asc", () => {

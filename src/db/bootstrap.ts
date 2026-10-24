@@ -221,6 +221,25 @@ const MIGRATIONS = [
       ALTER TABLE loss_entries ADD COLUMN is_beer_round INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 6,
+    name: 'normalize_voided_loss_corrections',
+    sql: `
+      -- Older versions deleted the original loss AND inserted a negative
+      -- correction, inadvertently subtracting the amount twice. Only fix
+      -- corrections identified by their matching deletion audit event;
+      -- genuine manual corrections must be preserved unchanged.
+      UPDATE corrections
+      SET amount_cents = 0
+      WHERE id IN (
+        SELECT CASE WHEN json_valid(payload_json)
+          THEN json_extract(payload_json, '$.correctionId')
+          ELSE NULL END
+        FROM audit_events
+        WHERE event_type IN ('loss.deleted', 'beerround.deleted')
+      );
+    `,
+  },
 ]
 
 let bootstrapped = false
@@ -247,18 +266,20 @@ function applyMigrations() {
       continue
     }
 
-    getSqlite().execSync(migration.sql)
-    sqliteRun(
-      `
-        INSERT OR REPLACE INTO schema_migrations (version, name, applied_at)
-        VALUES ($version, $name, $appliedAt)
-      `,
-      {
-        $version: migration.version,
-        $name: migration.name,
-        $appliedAt: nowIso(),
-      }
-    )
+    getSqlite().withTransactionSync(() => {
+      getSqlite().execSync(migration.sql)
+      sqliteRun(
+        `
+          INSERT OR REPLACE INTO schema_migrations (version, name, applied_at)
+          VALUES ($version, $name, $appliedAt)
+        `,
+        {
+          $version: migration.version,
+          $name: migration.name,
+          $appliedAt: nowIso(),
+        }
+      )
+    })
   }
 }
 
@@ -285,7 +306,7 @@ function ensureSettings() {
         created_at,
         updated_at
       )
-      VALUES ('app', $defaultStakeCents, 'EUR', $cashboxLabel, $ruleProfileJson, 'basic', 'original', 'full_average', $createdAt, $updatedAt)
+      VALUES ('app', $defaultStakeCents, 'EUR', $cashboxLabel, $ruleProfileJson, 'basic', 'bvb09', 'full_average', $createdAt, $updatedAt)
     `,
     {
       $defaultStakeCents: 100,

@@ -1,12 +1,14 @@
 import { ActivityIndicator, Alert, Pressable, Text } from "react-native";
 import { useEffect, useState } from "react";
 
+import { BrandHero } from "@/components/brand";
 import { Badge, Button, Card, Field, Input, Notice, Screen, SectionTitle, Select, Split, Stack } from "@/components/ui";
 import { formatCurrency } from "@/domain/format";
 import type { AbsencePenaltyMode, ThemeId, ViewMode } from "@/domain/types";
 import { parseEuroToCents } from "@/domain/utils";
 import { useAsyncResource } from "@/hooks/use-async-resource";
 import { useRuntime } from "@/providers/runtime-provider";
+import { BackupService } from "@/services/backup-service";
 import { SessionService } from "@/services/session-service";
 import { colors } from "@/theme/tokens";
 
@@ -53,6 +55,7 @@ export default function SettingsScreen() {
   const [cashboxLabel, setCashboxLabel] = useState("Getränkekasse");
   const [absencePenaltyMode, setAbsencePenaltyMode] = useState<AbsencePenaltyMode>("full_average");
   const [newPlayer, setNewPlayer] = useState("");
+  const [backupBusy, setBackupBusy] = useState(false);
 
   useEffect(() => {
     if (!data.data) {
@@ -180,12 +183,63 @@ export default function SettingsScreen() {
     );
   }
 
+  async function handleShareBackup() {
+    try {
+      setBackupBusy(true);
+      await BackupService.shareBackup();
+      runtime.setFlash({ type: "success", message: "Sicherung zum Speichern oder Teilen bereitgestellt." });
+    } catch (caught) {
+      runtime.setFlash({ type: "error", message: caught instanceof Error ? caught.message : "Sicherung fehlgeschlagen." });
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
+  async function handleRestoreBackup() {
+    try {
+      setBackupBusy(true);
+      const backupBytes = await BackupService.pickAndValidateBackup();
+      if (!backupBytes) return;
+      Alert.alert(
+        "Sicherung wiederherstellen?",
+        "Die aktuellen Spieler, Spielabende, Buchungen und Einstellungen werden durch die ausgewählte Sicherung ersetzt. Das kann nicht rückgängig gemacht werden. Hast du die aktuellen Daten vorher gesichert?",
+        [
+          { text: "Abbrechen", style: "cancel" },
+          {
+            text: "Daten ersetzen",
+            style: "destructive",
+            async onPress() {
+              try {
+                BackupService.restoreValidatedBackup(backupBytes);
+                await runtime.refreshAuthState();
+                runtime.bumpDataVersion();
+                runtime.setFlash({ type: "success", message: "Sicherung erfolgreich wiederhergestellt." });
+              } catch (caught) {
+                runtime.setFlash({ type: "error", message: caught instanceof Error ? caught.message : "Wiederherstellung fehlgeschlagen." });
+              }
+            },
+          },
+        ],
+      );
+    } catch (caught) {
+      runtime.setFlash({ type: "error", message: caught instanceof Error ? caught.message : "Datei konnte nicht geprüft werden." });
+    } finally {
+      setBackupBusy(false);
+    }
+  }
+
   const isAdvanced = runtime.viewMode === "advanced";
 
   return (
     <Screen>
       <Stack>
         {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
+
+        <BrandHero
+          title="Deine Runde. Dein Look."
+          subtitle="BVB 09 mit rundem Emblem und Gelbe-Wand-Kontrast oder eines der anderen Farbschemata."
+          themeId={runtime.themeId}
+        />
 
         <Card tone="accent">
           <SectionTitle eyebrow="Ansicht" title="Darstellung" />
@@ -205,7 +259,7 @@ export default function SettingsScreen() {
               onValueChange={(value) => runtime.setTheme(value as ThemeId)}
               items={[
                 { label: "Original – Warm & Gold", value: "original" },
-                { label: "BVB 09 – Schwarz & Gelb", value: "bvb09" },
+                { label: "BVB 09 – Gelbe Wand ⚫🟡", value: "bvb09" },
                 { label: "Midnight – Dunkel & Blau", value: "midnight" },
               ]}
             />
@@ -299,6 +353,18 @@ export default function SettingsScreen() {
               </Card>
             ))}
           </Stack>
+        </Card>
+
+        <Card>
+          <SectionTitle eyebrow="Datenhoheit" title="Sicherung und Wiederherstellung" />
+          <Text style={{ color: colors.muted, lineHeight: 22 }}>
+            Vollständige Offline-Sicherung mit allen Spielern, Abenden, Buchungen und Einstellungen. Die App speichert weiterhin alles lokal auf diesem Gerät.
+          </Text>
+          <Split>
+            <Button tone="secondary" disabled={backupBusy} onPress={() => void handleShareBackup()}>SQLite-Sicherung exportieren</Button>
+            <Button tone="secondary" disabled={backupBusy} onPress={() => void handleRestoreBackup()}>Sicherung wiederherstellen</Button>
+          </Split>
+          <Text style={{ color: colors.muted, fontSize: 12 }}>Vor Gerätewechseln oder größeren Updates eine Sicherung außerhalb der App speichern.</Text>
         </Card>
 
         <Button tone="secondary" onPress={() => runtime.resetApp()}>

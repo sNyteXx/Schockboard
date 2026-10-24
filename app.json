@@ -2,9 +2,9 @@
   "expo": {
     "name": "Schockboard",
     "slug": "schockboard-apk",
-    "version": "1.1.5",
+    "version": "2.0.0",
     "scheme": "schockboard",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "experiments": {
@@ -20,6 +20,7 @@
     },
     "android": {
       "package": "de.schockboard.apk",
+      "versionCode": 200,
       "adaptiveIcon": {
         "backgroundColor": "#130f0b",
         "foregroundImage": "./assets/android-icon-foreground.png",

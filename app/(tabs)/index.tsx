@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router";
 import { ActivityIndicator, Text } from "react-native";
 
+import { BrandHero } from "@/components/brand";
 import { Badge, Button, Card, EmptyState, ListRow, Notice, Screen, SectionTitle, Split, Stack, StatCard } from "@/components/ui";
 import { formatCurrency, formatDateTime } from "@/domain/format";
 import { describeHistoryEntry } from "@/domain/history";
@@ -30,15 +31,18 @@ export default function DashboardScreen() {
       <Stack>
         {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
 
-        <Card tone="accent">
-          <SectionTitle eyebrow="Live-Übersicht" title="Schuldenboard" />
-          <Split>
-            <Button onPress={() => router.push("/(tabs)/sessions")}>🎲 Spielabend öffnen</Button>
-            <Button tone="secondary" onPress={() => router.push("/(tabs)/cashbox")}>
-              💰 Zahlung buchen
-            </Button>
-          </Split>
-        </Card>
+        <BrandHero
+          themeId={runtime.themeId}
+          title="Dein Schockboard"
+          subtitle={openSession ? `Live: ${openSession.title} – ${openSession.presentCount} Spieler am Tisch` : 'Eine Runde. Ein Brett. Alles im Blick.'}
+          aside={<Badge tone={openSession ? "success" : "default"}>{openSession ? "● LIVE" : "BEREIT"}</Badge>}
+        />
+        <Split>
+          <Button onPress={() => router.push(openSession ? `/session/${openSession.id}` : "/(tabs)/sessions")}>
+            {openSession ? "Jetzt Verluste buchen →" : "Neuen Spielabend starten →"}
+          </Button>
+          <Button tone="secondary" onPress={() => router.push("/(tabs)/cashbox")}>Zahlung buchen</Button>
+        </Split>
 
         <Split>
           <StatCard

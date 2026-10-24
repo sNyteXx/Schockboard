@@ -26,6 +26,7 @@ type RuntimeContextValue = {
     type: 'loss' | 'beerround'
     sessionId: string
     playerId: string
+    entryId: string
     label: string
   }) => void
   cancelUndo: () => void
@@ -39,7 +40,7 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
   const [dataVersion, setDataVersion] = useState(0)
   const [flash, setFlash] = useState<FlashMessage | null>(null)
   const [viewMode, setViewModeState] = useState<ViewMode>('basic')
-  const [themeId, setThemeIdState] = useState<ThemeId>('original')
+  const [themeId, setThemeIdState] = useState<ThemeId>('bvb09')
 
   async function refreshAuthState() {
     await DatabaseService.initialize()
@@ -108,7 +109,7 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
               try {
                 await AuthService.logout()
                 await DatabaseService.reset()
-                setActiveTheme('original')
+                setActiveTheme('bvb09')
                 setFlash(null)
                 await refreshAuthState()
                 setFlash({ type: 'success', message: 'App wurde zurückgesetzt.' })
@@ -145,7 +146,7 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
   return (
     <RuntimeContext.Provider value={value}>
       {children}
-      <UndoToast actor={account} onUndo={() => setDataVersion((v) => v + 1)} />
+      <UndoToast actor={account} themeId={themeId} onUndo={() => setDataVersion((v) => v + 1)} />
     </RuntimeContext.Provider>
   )
 }

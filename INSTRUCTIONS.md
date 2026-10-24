@@ -24,7 +24,7 @@ This file assumes a fresh Linux machine or VM and brings the project to a state 
 - This is an Expo + Expo Router app with local SQLite
 - The native `android/` folder is generated and currently ignored by Git
 - After cloning on Linux, you must run Expo prebuild again before Gradle builds
-- Current Android target is portrait-only, but layouts are built to scale up to 7"+ tablets
+- Android supports portrait and landscape; compact/medium/expanded layouts respond to the available window width
 
 ## Required Toolchain
 
@@ -135,7 +135,7 @@ npx expo prebuild --platform android
 
 After prebuild, verify these two project choices are still present:
 
-- `app.json`: `"orientation": "portrait"`
+- `app.json`: `"orientation": "default"`
 - `android/gradle.properties`: `newArchEnabled=false`
 
 If prebuild overwrites them, set them again before building.
@@ -225,10 +225,11 @@ Prefer these workflows:
 ## 11. Known Repo-Specific Caveats
 
 - The project uses local SQLite and Secure Store, so app state is device-local
-- A fresh install starts with empty app data and requires initial setup again
+- Before reinstalling, uninstalling, or switching devices, use **Setup → SQLite-Sicherung exportieren**; restore is available from the same screen
+- A fresh install starts with empty app data unless a backup is restored
 - CSV export uses Android share/file APIs and should be tested on a real device
-- Tablet support is layout-driven, not a separate APK flavor
-- Portrait is locked globally; tablet use is therefore also portrait-first
+- Tablet support is layout-driven, not a separate APK flavor; test 600–1000 dp as well as 1000+ dp widths
+- Orientation is unlocked; test both tablet portrait and landscape, including Android split-screen
 
 ## 12. First Smoke Test On Linux
 
