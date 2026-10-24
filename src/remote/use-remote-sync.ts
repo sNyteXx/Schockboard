@@ -2,7 +2,6 @@ import { useEffect, useRef } from 'react'
 import { AppState } from 'react-native'
 
 import { syncBackgroundRegistration } from '@/remote/background'
-import { RemoteConfigStore } from '@/remote/config'
 import { SyncEngine } from '@/remote/sync-engine'
 
 const CHANGE_DEBOUNCE_MS = 3_000
@@ -33,10 +32,10 @@ export function useRemoteSync({ ready, dataVersion, onRemoteChanges }: {
       interval = null
     }
 
-    void RemoteConfigStore.get().then((config) => syncBackgroundRegistration(Boolean(config)))
+    // Always scheduled: it also performs the automatic first enrollment.
+    void syncBackgroundRegistration(true)
     const unsubscribe = SyncEngine.subscribe((outcome) => {
       if (outcome.status === 'ok' && outcome.applied > 0) onRemoteChangesRef.current()
-      if (outcome.status === 'not-paired') stop()
     })
     const appState = AppState.addEventListener('change', (state) => (state === 'active' ? start() : stop()))
     start()

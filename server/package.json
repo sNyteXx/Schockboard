@@ -1,0 +1,39 @@
+{
+  "name": "schockboard-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Remote admin server and web UI for the Schockboard app",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node build.mjs && DEV_NO_AUTH=1 DATA_DIR=./.data node dist/server.js",
+    "build": "npm run build:web && npm run build:server",
+    "build:server": "node build.mjs",
+    "build:web": "vite build --config web/vite.config.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc -p tsconfig.json && tsc -p web/tsconfig.json",
+    "test": "vitest run",
+    "demo:snapshot": "node dist/make-demo-snapshot.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.13",
+    "jose": "^6.2.13",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "esbuild": "^0.28.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "~5.9.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

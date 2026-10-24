@@ -2,11 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('expo-crypto', async () => (await import('./support/memory-sqlite')).cryptoMock)
 vi.mock('@/db/client', async () => (await import('./support/memory-sqlite')).clientMock)
-vi.mock('expo-secure-store', () => ({}))
 
 import { ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
 import { createPlayer, getDebtSummaries, listPlayers } from '@/db/queries'
-import { normalizeServerOrigin } from '@/remote/config'
 import { applyRemoteCommands, getUnreportedResults, markResultsReported } from '@/remote/executor'
 import type { RemoteCommand } from '@/remote/protocol'
 import { createMemoryDatabase, memory } from './support/memory-sqlite'
@@ -65,13 +63,5 @@ describe('remote command executor', () => {
     expect(listPlayers().find((player) => player.id === gerd.id)!.isCore).toBe(true)
     markResultsReported(getUnreportedResults().map((row) => row.id))
     expect(getUnreportedResults()).toEqual([])
-  })
-})
-
-describe('pairing target', () => {
-  it('accepts only the own https admin server', () => {
-    expect(normalizeServerOrigin('https://sh0ckb04rd.snytex.de/egal')).toBe('https://sh0ckb04rd.snytex.de')
-    expect(() => normalizeServerOrigin('http://sh0ckb04rd.snytex.de')).toThrow(/HTTPS/)
-    expect(() => normalizeServerOrigin('https://evil.example.com')).toThrow(/abgelehnt/)
   })
 })

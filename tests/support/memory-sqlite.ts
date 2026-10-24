@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
 /**
@@ -32,6 +35,17 @@ export function createMemoryDatabase() {
     },
     getAllSync<T>(source: string, params?: Params) {
       return db.prepare(source).all(bind(params)) as T[]
+    },
+    /** Same contract as expo-sqlite's serializeSync: the database file image. */
+    serializeSync() {
+      const dir = mkdtempSync(join(tmpdir(), 'sb-serialize-'))
+      try {
+        const file = join(dir, 'image.sqlite')
+        db.exec(`VACUUM INTO '${file}'`)
+        return new Uint8Array(readFileSync(file))
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
     },
     withTransactionSync(task: () => void) {
       // expo-sqlite does not support nesting either; fail loudly if we do.

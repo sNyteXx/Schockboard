@@ -8,7 +8,6 @@ import type { AbsencePenaltyMode, ThemeId, ViewMode } from "@/domain/types";
 import { parseEuroToCents } from "@/domain/utils";
 import { useAsyncResource } from "@/hooks/use-async-resource";
 import { useRuntime } from "@/providers/runtime-provider";
-import { RemoteStatusCard } from "@/remote/remote-status-card";
 import { BackupService } from "@/services/backup-service";
 import { SessionService } from "@/services/session-service";
 import { colors } from "@/theme/tokens";
@@ -357,8 +356,6 @@ export default function SettingsScreen() {
             ))}
           </Stack>
         </Card>
-
-        <RemoteStatusCard />
 
         <Card>
           <SectionTitle eyebrow="Datenhoheit" title="Sicherung und Wiederherstellung" />

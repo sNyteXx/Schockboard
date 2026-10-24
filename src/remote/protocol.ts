@@ -9,14 +9,16 @@ import { z } from 'zod'
  *                 them locally through the normal domain functions and
  *                 reports a result per command. The server never edits data.
  *
+ * Enrollment (no token; the app does this by itself on first start):
+ *   POST /api/device/enroll              ← EnrollRequest → EnrollResponse, or 403 enrollment_closed
+ *   Open only while no device was ever enrolled, or for a short window the
+ *   admin opens in the web UI ("Neues Gerät zulassen").
  * Device endpoints (Authorization: Bearer <device token>):
  *   GET  /api/device/commands            → DeviceCommandsResponse (pending, oldest first)
  *   POST /api/device/commands/results    ← CommandResultsRequest
  *   PUT  /api/device/snapshot            ← raw SQLite bytes, Content-Type application/vnd.sqlite3,
  *                                          headers X-Schockboard-Schema, X-Snapshot-Created-At
  *   GET  /api/device/ping                → { ok: true }
- * Pairing link shown as QR code in the web admin:
- *   schockboard://pair?server=<https origin>&token=<device token>
  */
 
 export const PROTOCOL_VERSION = 1
@@ -96,6 +98,14 @@ export function parseCommandPayload<T extends CommandType>(type: T, payload: unk
   return commandSchemas[type].parse(payload) as CommandPayload<T>
 }
 
-export function buildPairingUrl(server: string, token: string) {
-  return `schockboard://pair?server=${encodeURIComponent(server)}&token=${encodeURIComponent(token)}`
-}
+/** Admin server every app build talks to; there is no user-facing pairing. */
+export const DEFAULT_REMOTE_SERVER = 'https://sh0ckb04rd.snytex.de'
+
+export const enrollRequestSchema = z.object({
+  deviceName: z.string().trim().min(1).max(80),
+})
+export const enrollResponseSchema = z.object({
+  token: z.string().min(20),
+  deviceId: id,
+})
+export type EnrollResponse = z.infer<typeof enrollResponseSchema>

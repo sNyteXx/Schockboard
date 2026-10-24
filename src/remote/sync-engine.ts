@@ -4,11 +4,15 @@ import { LATEST_SCHEMA_VERSION, ensureDatabaseReady } from '@/db/bootstrap'
 import { getSqlite, sqliteGet } from '@/db/client'
 import { withRollbackJournalHeader } from '@/domain/backup-validation'
 import { applyRemoteCommands, getUnreportedResults, markResultsReported } from '@/remote/executor'
-import { RemoteConfigStore, type RemoteConfig } from '@/remote/config'
-import { deviceCommandsResponseSchema } from '@/remote/protocol'
+import { RemoteConfigStore, getDeviceName, getRemoteServer, type RemoteConfig } from '@/remote/config'
+import { deviceCommandsResponseSchema, enrollResponseSchema } from '@/remote/protocol'
 import { AuthService } from '@/services/auth-service'
 
 const REQUEST_TIMEOUT_MS = 20_000
+// While the server refuses new devices, ask again at most this often.
+const ENROLL_RETRY_MS = 15 * 60_000
+
+class DeviceRejectedError extends Error {}
 
 export type SyncOutcome =
   | { status: 'not-paired' }
@@ -26,12 +30,10 @@ async function request(config: RemoteConfig, path: string, init: { method?: stri
     const response = await fetch(`${config.server}${path}`, {
       method: init.method ?? 'GET',
       body: init.body,
-      headers: { Authorization: `Bearer ${config.token}`, ...init.headers },
+      headers: { ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}), ...init.headers },
       signal: controller.signal,
     })
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('Gerät ist nicht mehr gekoppelt (Token abgelehnt).')
-    }
+    if (response.status === 401) throw new DeviceRejectedError('Token vom Server abgelehnt.')
     if (!response.ok) throw new Error(`Server antwortet mit ${response.status}.`)
     return response
   } finally {
@@ -76,8 +78,42 @@ async function uploadSnapshotIfChanged(config: RemoteConfig) {
   return true
 }
 
+/**
+ * No pairing UI: the app registers itself with the built-in server. The
+ * server only accepts that for its very first device or inside a short
+ * window opened by the admin, so a stranger's install is turned away.
+ */
+async function ensureEnrolled(): Promise<RemoteConfig | null> {
+  const existing = await RemoteConfigStore.get()
+  if (existing) return existing
+
+  const now = Date.now()
+  if (now - (await RemoteConfigStore.getLastEnrollAttempt()) < ENROLL_RETRY_MS) return null
+  await RemoteConfigStore.setLastEnrollAttempt(now)
+
+  const server = getRemoteServer()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    const response = await fetch(`${server}/api/device/enroll`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceName: getDeviceName() }),
+      signal: controller.signal,
+    })
+    if (response.status === 403) return null // enrollment closed: stay local-only
+    if (!response.ok) throw new Error(`Anmeldung am Server fehlgeschlagen (${response.status}).`)
+    const { token } = enrollResponseSchema.parse(await response.json())
+    const config = { server, token, pairedAt: new Date().toISOString() }
+    await RemoteConfigStore.set(config)
+    return config
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function runSync(): Promise<SyncOutcome> {
-  const config = await RemoteConfigStore.get()
+  const config = await ensureEnrolled()
   if (!config) return { status: 'not-paired' }
 
   ensureDatabaseReady()
@@ -111,11 +147,16 @@ export const SyncEngine = {
   syncNow(): Promise<SyncOutcome> {
     if (!running) {
       running = runSync()
-        .catch((error): SyncOutcome => ({
-          status: 'error',
-          message: error instanceof Error ? error.message : 'Sync fehlgeschlagen.',
-          at: new Date().toISOString(),
-        }))
+        .catch(async (error): Promise<SyncOutcome> => {
+          // Revoked or replaced on the server: forget the token so the app
+          // can enroll again once the admin allows a new device.
+          if (error instanceof DeviceRejectedError) await RemoteConfigStore.clear()
+          return {
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Sync fehlgeschlagen.',
+            at: new Date().toISOString(),
+          }
+        })
         .then((outcome) => {
           lastOutcome = outcome
           for (const listener of listeners) listener(outcome)
@@ -135,16 +176,5 @@ export const SyncEngine = {
     return () => {
       listeners.delete(listener)
     }
-  },
-  /** Checks a pairing link against the server before storing it. */
-  async pair(server: string, token: string) {
-    const config = { server, token, pairedAt: new Date().toISOString() }
-    await request(config, '/api/device/ping')
-    await RemoteConfigStore.set(config)
-    return this.syncNow()
-  },
-  async unpair() {
-    await RemoteConfigStore.clear()
-    lastOutcome = { status: 'not-paired' }
   },
 }

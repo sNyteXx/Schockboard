@@ -15,9 +15,15 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
       # Expo Router's optional web peer chain needs the existing legacy-peer
       # resolution used for development on this native-first project.
       - run: npm ci --legacy-peer-deps
       - run: npm run typecheck
+      # Admin server: built before the app tests so the app↔server e2e test runs.
+      - run: npm ci && npm run typecheck && npm test && npm run build
+        working-directory: server
       - run: npm test
       - run: npx expo export --platform android --output-dir dist

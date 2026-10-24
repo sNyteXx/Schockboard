@@ -11,7 +11,7 @@ TaskManager.defineTask(REMOTE_SYNC_TASK, async () => {
   return outcome.status === 'error' ? BackgroundTask.BackgroundTaskResult.Failed : BackgroundTask.BackgroundTaskResult.Success
 })
 
-/** Keeps the OS-scheduled task in line with the pairing state. */
+/** Registers (or removes) the OS-scheduled sync task. */
 export async function syncBackgroundRegistration(paired: boolean) {
   try {
     const registered = await TaskManager.isTaskRegisteredAsync(REMOTE_SYNC_TASK)
