@@ -46,6 +46,7 @@ export default function TabsLayout() {
       >
         <Tabs.Screen name="index" options={{ title: "Board", tabBarIcon: ({ focused }) => <TabIcon name="grid" focused={focused} /> }} />
         <Tabs.Screen name="sessions" options={{ title: "Abende", tabBarIcon: ({ focused }) => <TabIcon name="dice" focused={focused} /> }} />
+        <Tabs.Screen name="stats" options={{ title: "Statistik", tabBarIcon: ({ focused }) => <TabIcon name="stats-chart" focused={focused} /> }} />
         <Tabs.Screen name="cashbox" options={{ title: "Kasse", tabBarIcon: ({ focused }) => <TabIcon name="wallet" focused={focused} /> }} />
         <Tabs.Screen name="history" options={{ title: "Log", tabBarIcon: ({ focused }) => <TabIcon name="time" focused={focused} /> }} />
         <Tabs.Screen name="settings" options={{ title: "Setup", tabBarIcon: ({ focused }) => <TabIcon name="settings" focused={focused} /> }} />

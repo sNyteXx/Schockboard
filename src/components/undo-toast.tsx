@@ -16,6 +16,22 @@ import { Feedback } from '@/services/haptics'
 import { UNDO_WINDOW_MS, UndoService } from '@/services/undo-service'
 import { colors, radius, spacing } from '@/theme/tokens'
 
+// Extra bottom offset requested by screens with a sticky bottom bar.
+let toastLift = 0
+const liftListeners = new Set<(lift: number) => void>()
+
+/** Keeps the undo toast above a sticky footer while the caller is mounted. */
+export function useUndoToastLift(px: number) {
+  useEffect(() => {
+    toastLift = px
+    liftListeners.forEach((listener) => listener(px))
+    return () => {
+      toastLift = 0
+      liftListeners.forEach((listener) => listener(0))
+    }
+  }, [px])
+}
+
 export function UndoToast({
   actor,
   onUndo,
@@ -34,6 +50,14 @@ export function UndoToast({
   const remaining = useSharedValue(1)
 
   const { isTablet } = useDeviceLayout()
+  const [lift, setLift] = useState(toastLift)
+
+  useEffect(() => {
+    liftListeners.add(setLift)
+    return () => {
+      liftListeners.delete(setLift)
+    }
+  }, [])
 
   useEffect(() => {
     const clearLabelIfIdle = () => {
@@ -82,7 +106,7 @@ export function UndoToast({
   if (!label) return null
 
   return (
-    <Animated.View style={[styles.container, { bottom: Math.max(insets.bottom, 12) + (isTablet ? 12 : 72) }, containerStyle]}>
+    <Animated.View style={[styles.container, { bottom: Math.max(insets.bottom, 12) + (isTablet ? 12 : 72) + lift }, containerStyle]}>
       <View style={styles.row}>
         <Text style={styles.text}>{label}</Text>
         <Pressable accessibilityRole="button" onPress={handleUndo} style={({ pressed }) => [styles.button, pressed && { opacity: 0.75 }]}>

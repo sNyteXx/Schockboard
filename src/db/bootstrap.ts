@@ -255,7 +255,27 @@ const MIGRATIONS = [
       DROP TABLE v6_voided;
     `,
   },
+  {
+    version: 7,
+    name: 'remote_inbox',
+    sql: `
+      -- Commands queued in the web admin and applied on this device. The
+      -- primary key makes applying a command idempotent; 'reported' tracks
+      -- whether the server has acknowledged the result yet.
+      CREATE TABLE IF NOT EXISTS remote_inbox (
+        command_id TEXT PRIMARY KEY NOT NULL,
+        type TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('applied', 'rejected')),
+        error TEXT,
+        applied_at TEXT NOT NULL,
+        reported INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
 ]
+
+export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version
 
 let bootstrapped = false
 

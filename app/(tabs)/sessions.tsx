@@ -176,7 +176,7 @@ export default function SessionsScreen() {
                     {formatDate(session.startedAt)} · {session.lossCount} Verluste · {formatCurrency(session.stakeCents)} Einsatz
                   </Text>
                   {isAdvanced ? <Text style={{ color: colors.muted }}>Abwesenheit: {formatCurrency(session.totalAbsenceCents)}</Text> : null}
-                  <Text style={{ color: colors.accentStrong, fontWeight: "800" }}>Ansehen →</Text>
+                  <Text style={{ color: colors.accentStrong, fontWeight: "800" }}>{session.status === "open" ? "Weiterspielen →" : "Zusammenfassung →"}</Text>
                 </Pressable>
               ))
             ) : (

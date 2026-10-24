@@ -8,6 +8,7 @@ import { SessionService } from '@/services/session-service'
 import { UndoService } from '@/services/undo-service'
 import { colors, setActiveTheme, spacing } from '@/theme/tokens'
 import { UndoToast } from '@/components/undo-toast'
+import { useRemoteSync } from '@/remote/use-remote-sync'
 
 type RuntimeContextValue = {
   ready: boolean
@@ -63,6 +64,8 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refreshAuthState()
   }, [])
+
+  useRemoteSync({ ready, dataVersion, onRemoteChanges: () => setDataVersion((v) => v + 1) })
 
   const value: RuntimeContextValue = {
     ready,

@@ -3,11 +3,11 @@ import { File, Paths } from 'expo-file-system'
 import * as Sharing from 'expo-sharing'
 import { backupDatabaseSync, deserializeDatabaseSync } from 'expo-sqlite'
 
-import { ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
+import { LATEST_SCHEMA_VERSION, ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
 import { getSqlite } from '@/db/client'
 import { findMissingSchemaObjects, validateSqliteBackupBytes, withRollbackJournalHeader } from '@/domain/backup-validation'
 
-const CURRENT_MIGRATION = 6
+const CURRENT_MIGRATION = LATEST_SCHEMA_VERSION
 
 /** Opens a serialized database image in memory, tolerating WAL headers. */
 function openImage(bytes: Uint8Array) {

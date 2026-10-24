@@ -12,7 +12,8 @@ function seedVersion5Database() {
   ensureDatabaseReady()
   const db = memory.current
   db.execSync(`
-    DELETE FROM schema_migrations WHERE version = 6;
+    DELETE FROM schema_migrations WHERE version >= 6;
+    DROP TABLE remote_inbox;
     INSERT INTO auth_accounts VALUES ('acc', 'Test', '-', '-', 'x', 'x', NULL);
     INSERT INTO players (id, name, slug, is_core, is_archived, created_at, updated_at) VALUES ('p1', 'Anna', 'anna', 1, 0, 'x', 'x');
     INSERT INTO corrections VALUES ('c_auto', 'p1', NULL, -100, 'Storniert: Verlust', 'acc', 'x');

@@ -6,6 +6,7 @@ import { Badge, Button, Card, EmptyState, ListRow, Notice, Screen, SectionTitle,
 import { formatCurrency, formatDateTime } from "@/domain/format";
 import { describeHistoryEntry } from "@/domain/history";
 import { useAsyncResource } from "@/hooks/use-async-resource";
+import { hasActiveCorePlayers } from "@/hooks/use-onboarding";
 import { useRuntime } from "@/providers/runtime-provider";
 import { SessionService } from "@/services/session-service";
 import { colors } from "@/theme/tokens";
@@ -25,6 +26,7 @@ export default function DashboardScreen() {
 
   const openSession = snapshot.data.openSession;
   const isAdvanced = runtime.viewMode === "advanced";
+  const needsSetup = !openSession && !hasActiveCorePlayers();
 
   return (
     <Screen>
@@ -37,6 +39,14 @@ export default function DashboardScreen() {
           subtitle={openSession ? `Live: ${openSession.title} – ${openSession.presentCount} Spieler am Tisch` : 'Eine Runde. Ein Brett. Alles im Blick.'}
           aside={<Badge tone={openSession ? "success" : "default"}>{openSession ? "● LIVE" : "BEREIT"}</Badge>}
         />
+        {needsSetup ? (
+          <Card tone="accent">
+            <SectionTitle eyebrow="Erste Schritte" title="Stammrunde einrichten" />
+            <Text style={{ color: colors.muted }}>Lege deine Stammspieler, den Einsatz und die Abwesenheitsregel in einem kurzen Assistenten fest.</Text>
+            <Button onPress={() => router.push("/onboarding")}>Einrichtung starten →</Button>
+          </Card>
+        ) : null}
+
         <Split>
           <Button onPress={() => router.push(openSession ? `/session/${openSession.id}` : "/(tabs)/sessions")}>
             {openSession ? "Jetzt Verluste buchen →" : "Neuen Spielabend starten →"}

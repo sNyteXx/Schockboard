@@ -148,7 +148,11 @@ const badgeToneStyles = StyleSheet.create({
   danger: { backgroundColor: "rgba(222, 103, 92, 0.14)" },
 });
 
-export function Screen({ children }: { children: React.ReactNode }) {
+/**
+ * Scrollable page. `footer` renders a sticky area below the scroll view (e.g. a
+ * thumb-reachable action bar); it sits above the tab bar and respects insets.
+ */
+export function Screen({ children, footer }: { children: React.ReactNode; footer?: React.ReactNode }) {
   const styles = useStyles();
   const { isTablet } = useDeviceLayout();
   return (
@@ -157,6 +161,7 @@ export function Screen({ children }: { children: React.ReactNode }) {
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, isTablet && styles.scrollTablet]}>
         {children}
       </ScrollView>
+      {footer}
     </SafeAreaView>
   );
 }
