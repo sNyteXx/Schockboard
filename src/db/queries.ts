@@ -594,10 +594,15 @@ export function getCashboxSummary(): CashboxSummary {
   const totalOutstandingCents = balances.filter((cents) => cents > 0).reduce((sum, cents) => sum + cents, 0)
   const totalCreditCents = balances.filter((cents) => cents < 0).reduce((sum, cents) => sum - cents, 0)
 
+  const withdrawn = sqliteGet<{ cents: number }>('SELECT COALESCE(SUM(amount_cents), 0) AS cents FROM cashbox_withdrawals')?.cents ?? 0
+  const totalPaymentsCents = row?.total_payments_cents ?? 0
+
   return {
-    totalPaymentsCents: row?.total_payments_cents ?? 0,
+    totalPaymentsCents,
     totalOutstandingCents,
     totalCreditCents,
+    totalWithdrawalsCents: withdrawn,
+    cashOnHandCents: totalPaymentsCents - withdrawn,
   }
 }
 
@@ -728,6 +733,23 @@ export function getHistoryEntries(filters: HistoryFilters & { sessionId?: string
         INNER JOIN players p ON p.id = c.player_id
         LEFT JOIN sessions s ON s.id = c.session_id
         INNER JOIN auth_accounts a ON a.id = c.created_by_account_id
+
+        UNION ALL
+
+        SELECT
+          w.id,
+          'withdrawal' AS kind,
+          w.created_at,
+          NULL AS player_id,
+          NULL AS player_name,
+          w.amount_cents,
+          w.note AS message,
+          s.id AS session_id,
+          s.title AS session_title,
+          a.username AS actor_username
+        FROM cashbox_withdrawals w
+        LEFT JOIN sessions s ON s.id = w.session_id
+        INNER JOIN auth_accounts a ON a.id = w.created_by_account_id
 
         UNION ALL
 
@@ -1608,6 +1630,42 @@ function closeSessionUnsafe(input: { actor: Actor; sessionId: string }) {
     absenceChargeCount,
     reason: absenceReason,
   }
+}
+
+/** Takes money out of the cashbox (e.g. "Kasten Bier"); player balances stay as they are. */
+export function recordWithdrawal(input: { actor: Actor; amountCents: number; note: string; sessionId?: string | null }) {
+  const note = input.note.trim()
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new Error('Bitte einen Betrag größer 0 eingeben.')
+  if (!note) throw new Error('Bitte angeben, wofür das Geld entnommen wird.')
+  const cash = getCashboxSummary().cashOnHandCents
+  if (input.amountCents > cash) {
+    throw new Error(`In der Kasse sind nur ${(cash / 100).toFixed(2).replace('.', ',')} € – mehr kann nicht entnommen werden.`)
+  }
+
+  const withdrawalId = createId('withdrawal')
+  // No own transaction: remote commands already run inside one (no nesting).
+  sqliteRun(
+      `
+        INSERT INTO cashbox_withdrawals (id, amount_cents, note, session_id, created_by_account_id, created_at)
+        VALUES ($id, $amountCents, $note, $sessionId, $actor, $createdAt)
+      `,
+      {
+        $id: withdrawalId,
+        $amountCents: input.amountCents,
+        $note: note,
+        $sessionId: input.sessionId ?? null,
+        $actor: input.actor.accountId,
+        $createdAt: nowIso(),
+      }
+    )
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'withdrawal',
+      entityId: withdrawalId,
+      eventType: 'cashbox.withdrawal',
+      payload: { amountCents: input.amountCents, note },
+    })
+  return withdrawalId
 }
 
 export function recordPayment(input: {

@@ -63,12 +63,12 @@ export const commandSchemas = {
   // ---- admin overrides: edit history directly, open or closed evenings ----
   /** Deletes any booking; nothing in the app's log points to the change. */
   'entry.delete': z.object({
-    kind: z.enum(['loss', 'payment', 'correction', 'absence']),
+    kind: z.enum(['loss', 'payment', 'correction', 'absence', 'withdrawal']),
     entryId: id,
   }),
   /** Changes amount and/or note of any booking (loss incl. beer round). */
   'entry.update': z.object({
-    kind: z.enum(['loss', 'payment', 'correction', 'absence']),
+    kind: z.enum(['loss', 'payment', 'correction', 'absence', 'withdrawal']),
     entryId: id,
     amountCents: cents.optional(),
     note: z.string().trim().max(200).nullable().optional(),
@@ -86,6 +86,11 @@ export const commandSchemas = {
   /** Removes an evening with all its bookings and absence charges. */
   'session.delete': z.object({
     sessionId: id,
+  }),
+  /** Takes money out of the cashbox (purchases); player balances unchanged. */
+  'cashbox.withdraw': z.object({
+    amountCents: cents.refine((value) => value > 0, 'Betrag muss positiv sein.'),
+    note: z.string().trim().min(1).max(200),
   }),
   /** Removes individual entries of the app's log (audit_events). */
   'audit.delete': z.object({

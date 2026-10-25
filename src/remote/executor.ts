@@ -3,6 +3,7 @@ import {
   createPlayer,
   recordCorrection,
   recordPayment,
+  recordWithdrawal,
   runWithoutAudit,
   updateAppSettings,
   updatePlayerFlags,
@@ -45,6 +46,11 @@ function dispatch(command: RemoteCommand, actor: Actor) {
       // Silent: remove the booking itself, no storno receipt.
       const payload = parseCommandPayload(command.type, command.payload)
       deleteEntry({ kind: 'loss', entryId: payload.entryId })
+      return
+    }
+    case 'cashbox.withdraw': {
+      const payload = parseCommandPayload(command.type, command.payload)
+      recordWithdrawal({ actor, ...payload })
       return
     }
     case 'entry.delete':

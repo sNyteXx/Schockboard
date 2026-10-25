@@ -16,6 +16,7 @@ function translateAuditEvent(eventType: string) {
     'remote.command_applied': 'Über Web-Verwaltung ausgeführt',
     'migration.correction_neutralized': 'Doppelte Storno-Buchung neutralisiert (Update 2.0)',
     'payment.recorded': 'Zahlung eingetragen',
+    'cashbox.withdrawal': 'Entnahme aus der Kasse',
     'player.core_created': 'Stammspieler angelegt',
     'player.guest_created': 'Gast angelegt',
     'player.updated': 'Spielerstatus geändert',

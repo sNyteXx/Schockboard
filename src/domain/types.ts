@@ -122,6 +122,10 @@ export type CashboxSummary = {
   totalOutstandingCents: number
   /** Sum of credits (players who paid more than they owe). */
   totalCreditCents: number
+  /** Money taken out of the cashbox (purchases). */
+  totalWithdrawalsCents: number
+  /** What should physically be in the box: payments − withdrawals. */
+  cashOnHandCents: number
 }
 
 export type SessionOverview = {
@@ -149,7 +153,7 @@ export type SessionAttendanceRow = {
 
 export type HistoryEntry = {
   id: string
-  kind: 'loss' | 'beerround' | 'absence' | 'payment' | 'correction' | 'audit'
+  kind: 'loss' | 'beerround' | 'absence' | 'payment' | 'correction' | 'withdrawal' | 'audit'
   createdAt: string
   playerId: string | null
   playerName: string | null

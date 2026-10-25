@@ -13,6 +13,7 @@ const TABLES = {
   payment: { table: 'payments', note: 'note' },
   correction: { table: 'corrections', note: 'reason' },
   absence: { table: 'absence_charges', note: 'note' },
+  withdrawal: { table: 'cashbox_withdrawals', note: 'note' },
 } as const
 
 type Kind = keyof typeof TABLES
@@ -33,13 +34,14 @@ export function updateEntry(input: CommandPayload<'entry.update'>) {
   const { table, note } = TABLES[input.kind]
 
   if (input.amountCents !== undefined) {
+    if (input.kind === 'withdrawal' && input.amountCents <= 0) throw new Error('Entnahme muss größer 0 sein.')
     if (input.kind === 'correction' ? input.amountCents === 0 : input.amountCents < 0) {
       throw new Error(input.kind === 'correction' ? 'Korrektur darf nicht 0 sein.' : 'Betrag darf nicht negativ sein.')
     }
     sqliteRun(`UPDATE ${table} SET amount_cents = $amount WHERE id = $id`, { $id: input.entryId, $amount: input.amountCents })
   }
   if (input.note !== undefined) {
-    if (input.kind === 'correction' && !input.note) throw new Error('Korrekturen brauchen einen Grund.')
+    if ((input.kind === 'correction' || input.kind === 'withdrawal') && !input.note) throw new Error('Bitte einen Grund angeben.')
     sqliteRun(`UPDATE ${table} SET ${note} = $note WHERE id = $id`, { $id: input.entryId, $note: input.note })
   }
 }

@@ -55,6 +55,7 @@ const KIND_ICON: Record<HistoryEntry['kind'], { icon: IconName; tone: () => stri
   absence: { icon: 'person-remove', tone: () => colors.danger },
   payment: { icon: 'cash', tone: () => colors.success },
   correction: { icon: 'construct', tone: () => colors.info },
+  withdrawal: { icon: 'cart', tone: () => colors.warning },
   audit: { icon: 'document-text', tone: () => colors.muted },
 }
 

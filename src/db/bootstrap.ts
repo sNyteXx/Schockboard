@@ -283,6 +283,22 @@ const MIGRATIONS = [
       UPDATE app_settings SET theme_id = 'bvb09' WHERE theme_id = 'original';
     `,
   },
+  {
+    version: 9,
+    name: 'cashbox_withdrawals',
+    sql: `
+      -- Money taken out of the cashbox (e.g. drinks bought). Lowers the cash
+      -- on hand, never touches player balances.
+      CREATE TABLE IF NOT EXISTS cashbox_withdrawals (
+        id TEXT PRIMARY KEY,
+        amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+        note TEXT NOT NULL,
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        created_by_account_id TEXT NOT NULL REFERENCES auth_accounts(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL
+      );
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version
