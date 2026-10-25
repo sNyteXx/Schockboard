@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "de.schockboard.next",
-      "versionCode": 208,
+      "versionCode": 209,
       "adaptiveIcon": {
         "backgroundColor": "#101210",
         "foregroundImage": "./assets/next-icon-foreground.png",

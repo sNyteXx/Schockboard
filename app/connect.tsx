@@ -6,6 +6,7 @@ import * as Crypto from 'expo-crypto'
 import { SvgXml } from 'react-native-svg'
 import { Alert } from '@/components/dialog'
 import { AppText, Badge, Button, Card, CardHeader, Field, Input, Notice, Screen, ScreenHeader, Split } from '@/components/ui'
+import { RoundBoard } from '@/components/round-board'
 import { ConnectionError, Connections } from '@/remote/connection-client'
 import { invitationCode, type ConnectionState, type Invitation, type RoundState, type RoundCommandType } from '@/remote/collaboration-protocol'
 import { HandoffStore, type Handoff } from '@/remote/handoff'
@@ -38,7 +39,9 @@ export default function ConnectScreen() {
     const next = await Connections.state()
     setState(next)
     setHandoff(await HandoffStore.get())
+    setRound(previous => previous?.role === next.host?.role ? previous : null)
     setRound(next.host ? await Connections.round() : null)
+    setError(null)
   }, [])
   useEffect(() => {
     let alive = true
@@ -109,17 +112,40 @@ export default function ConnectScreen() {
       await send({ requestId: Crypto.randomUUID(), type, payload })
     })
   }
+  function sync() {
+    void run(async () => {
+      const result = await SyncEngine.syncNow(true)
+      if (result.status === 'error') throw new Error(result.message)
+      if (result.status === 'not-paired') throw new Error('Anmeldung noch nicht möglich.')
+    })
+  }
   const sourceTransfer = state?.transfer?.hostId === state?.deviceId ? state?.transfer : null
   const incoming = state && state.transfer?.guestId === state.deviceId && state.transfer?.status === 'claimed' ? state.transfer : null
 
   return <Screen maxWidth={1100}>
-    <ScreenHeader title="Geräte & Runde" context="Verbinden, gemeinsam spielen und sicher umziehen" />
-    <Button tone="ghost" onPress={() => router.canGoBack() ? router.back() : router.replace('/')}>Zurück</Button>
+    <ScreenHeader title={state?.host ? "Eure Runde" : "Geräte & Runde"} context={state?.host ? "Gemeinsam am Spieltisch · automatisch aktualisiert" : "Verbinden, gemeinsam spielen und sicher umziehen"} />
+    {!state?.host ? <Button tone="ghost" onPress={() => router.canGoBack() ? router.back() : router.replace('/')}>Zurück</Button> : null}
     {error ? <Notice type="error" message={error} /> : null}
     {notice ? <Notice type="success" message={notice} /> : null}
+    {round ? <RoundBoard round={round} actions={<Split><Button tone="secondary" disabled={busy} onPress={sync}>Aktualisieren</Button><Button tone="ghost" onPress={() => runtime.setTableLocked(true)}>Tisch sperren</Button></Split>} /> : null}
+    {pendingBooking ? <Card><Notice type="error" message="Bestätigung fehlt. Wiederholen verwendet dieselbe Buchungskennung und erzeugt keine zweite Buchung." /><Button disabled={busy} onPress={() => void run(() => send(pendingBooking))}>Buchung erneut bestätigen</Button></Card> : null}
+    {round?.role === 'operator' ? <Card><CardHeader title="Am Spieltisch buchen" icon="dice-outline" aside={<Badge>{round.role === 'operator' ? 'Bedienung' : 'Zuschauer'}</Badge>} />
+      <AppText tone="muted">{round.hostLabel} · letzter Stand {round.receivedAt ? formatDateTime(round.receivedAt) : 'unbekannt'}. Bei fehlender Verbindung bleibt der zuletzt geladene Stand sichtbar.</AppText>
+      {round.role === 'operator' ? <Field label="Betrag für Zahlung / Bierrunde (€)"><Input value={amount} onChangeText={setAmount} keyboardType="decimal-pad" /></Field> : null}
+      {round.session?.attendance.filter(row => row.present).map(player => <View key={player.playerId} style={{ gap: spacing.sm }}>
+        <AppText>{player.playerName} · {round.session!.losses.filter(row => row.playerId === player.playerId && !row.isBeerRound).length} Verluste</AppText>
+        {round.role === 'operator' ? <><AppText tone="muted">Konto: {formatCurrency(round.balances.find(row => row.playerId === player.playerId)?.openDebtCents ?? 0)}</AppText><Split>
+          <Button disabled={busy || !!pendingBooking} onPress={() => book('loss.record', player.playerId)}>+ Verlust</Button>
+          <Button tone="secondary" disabled={busy || !!pendingBooking} onPress={() => book('beerround.record', player.playerId)}>Bierrunde</Button>
+          <Button tone="secondary" disabled={busy || !!pendingBooking} onPress={() => book('payment.record', player.playerId)}>Zahlung</Button>
+        </Split></> : null}
+      </View>)}
+      {round.commands.slice(0, 8).map(command => <AppText key={command.id} tone={command.status === 'rejected' ? 'danger' : 'muted'}>{command.type === 'loss.record' ? 'Verlust' : command.type === 'payment.record' ? 'Zahlung' : 'Bierrunde'}: {({ pending: 'ausstehend', applied: 'übernommen', rejected: 'abgelehnt', cancelled: 'storniert' } as Record<string, string>)[command.status] ?? command.status}{command.error ? ` · ${command.error}` : ''}</AppText>)}
+    </Card> : null}
     <Card><CardHeader title={state?.label ?? 'Verbindung'} icon="phone-portrait-outline" />
       <AppText tone="muted">{state?.host ? `Verbunden mit ${state.host.label} · ${state.host.role === 'operator' ? 'Bedienung freigegeben' : 'Zuschauer'}` : 'Dieses Gerät führt seine eigene Runde.'}</AppText>
-      <Button disabled={busy} onPress={() => void run(async () => { const result = await SyncEngine.syncNow(true); if (result.status === 'error') throw new Error(result.message); if (result.status === 'not-paired') throw new Error('Anmeldung noch nicht möglich.'); setNotice('Abgleich abgeschlossen.') })}>Jetzt synchronisieren</Button>
+      {!round ? <Button disabled={busy} onPress={sync}>Jetzt synchronisieren</Button> : null}
+      {state?.host ? <Button tone="ghost" disabled={busy || !!pendingBooking || !!sourceTransfer} onPress={() => void run(() => Connections.leave())}>Runde verlassen</Button> : null}
     </Card>
     {state?.pendingTransferRequest ? <Notice type="success" message="In der Kommandozentrale wurde ein Umzug angefragt. Bestätige ihn hier mit „Geräteumzug vorbereiten“." /> : null}
     {incoming || handoff?.kind === 'receiver' ? <Card><CardHeader title="Übertragung übernehmen" icon="download-outline" />
@@ -153,22 +179,6 @@ export default function ConnectScreen() {
       <AppText tone="muted">Zuletzt gesehen: {member.lastSeenAt ? formatDateTime(member.lastSeenAt) : 'noch nicht'}</AppText>
       <Split><Button tone="secondary" disabled={busy} onPress={() => void run(() => Connections.setRole(member.deviceId, member.role === 'viewer' ? 'operator' : 'viewer'))}>{member.role === 'viewer' ? 'Bedienung freigeben' : 'Nur zuschauen'}</Button><Button tone="ghost" disabled={busy} onPress={() => void run(() => Connections.remove(member.deviceId))}>Trennen</Button></Split>
     </View>)}</Card> : null}
-    {round ? <Card><CardHeader title={round.session?.session.title ?? 'Kein laufender Abend'} icon="dice-outline" aside={<Badge>{round.role === 'operator' ? 'Bedienung' : 'Zuschauer'}</Badge>} />
-      <AppText tone="muted">{round.hostLabel} · letzter Stand {round.receivedAt ? formatDateTime(round.receivedAt) : 'unbekannt'}. Bei fehlender Verbindung bleibt der zuletzt geladene Stand sichtbar.</AppText>
-      {round.role === 'operator' ? <Field label="Betrag für Zahlung / Bierrunde (€)"><Input value={amount} onChangeText={setAmount} keyboardType="decimal-pad" /></Field> : null}
-      {pendingBooking ? <><Notice type="error" message="Bestätigung fehlt. Wiederholen verwendet dieselbe Buchungskennung und erzeugt keine zweite Buchung." /><Button disabled={busy} onPress={() => void run(() => send(pendingBooking))}>Buchung erneut bestätigen</Button></> : null}
-      {round.session?.attendance.filter(row => row.present).map(player => <View key={player.playerId} style={{ gap: spacing.sm }}>
-        <AppText>{player.playerName} · {round.session!.losses.filter(row => row.playerId === player.playerId && !row.isBeerRound).length} Verluste</AppText>
-        {round.role === 'operator' ? <><AppText tone="muted">Konto: {formatCurrency(round.balances.find(row => row.playerId === player.playerId)?.openDebtCents ?? 0)}</AppText><Split>
-          <Button disabled={busy || !!pendingBooking} onPress={() => book('loss.record', player.playerId)}>+ Verlust</Button>
-          <Button tone="secondary" disabled={busy || !!pendingBooking} onPress={() => book('beerround.record', player.playerId)}>Bierrunde</Button>
-          <Button tone="secondary" disabled={busy || !!pendingBooking} onPress={() => book('payment.record', player.playerId)}>Zahlung</Button>
-        </Split></> : null}
-      </View>)}
-      {round.commands.slice(0, 8).map(command => <AppText key={command.id} tone={command.status === 'rejected' ? 'danger' : 'muted'}>{command.type === 'loss.record' ? 'Verlust' : command.type === 'payment.record' ? 'Zahlung' : 'Bierrunde'}: {({ pending: 'ausstehend', applied: 'übernommen', rejected: 'abgelehnt', cancelled: 'storniert' } as Record<string, string>)[command.status] ?? command.status}{command.error ? ` · ${command.error}` : ''}</AppText>)}
-      {round.achievements.filter(award => award.unlockedAt).slice(-8).map(award => <AppText key={`${award.playerId}:${award.id}`} tone="accent">★ {award.playerName} · {award.title}</AppText>)}
-      <Button tone="secondary" onPress={() => runtime.setTableLocked(true)}>Tisch sperren</Button>
-      <Button tone="ghost" disabled={busy || !!pendingBooking || !!sourceTransfer} onPress={() => void run(() => Connections.leave())}>Runde verlassen</Button>
-    </Card> : null}
+
   </Screen>
 }

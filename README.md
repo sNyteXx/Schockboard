@@ -94,6 +94,10 @@ Web-Kommandozentrale und Trophäen am Desktop sowie die Buchungsansicht bei Hand
 
 <img src="docs/screenshots/web-handy-spielabend.png" alt="Web-Spielabend bei 390 Pixel Handybreite" width="390">
 
+Die gekoppelte Runde zeigt Spieler-Kacheln, Verluste, Bierrunden und Trophäen auch auf Zuschauergeräten. Im Web steht sie unter **Geräte**, sobald ein gekoppeltes Gerät ausgewählt ist. [Ansicht bei Handybreite](docs/screenshots/web-zuschauer-handy.png).
+
+![Gemeinsame Runde im Web mit Beispieldaten](docs/screenshots/web-zuschauer.png)
+
 ## Geräte, Erfolge und Sicherungen
 
 - **Geräte & Runde:** QR-Einladungen sind fünf Minuten gültig und einmal verwendbar. Neue Geräte sind Zuschauer. Der Spieltisch oder ein Web-Administrator gibt Bedienrechte für Verluste, Bierrunden und Zahlungen frei. Der Spieltisch bestätigt jeden Auftrag; Wiederholungen mit derselben Kennung werden nicht doppelt gebucht. Zuschauer erhalten keine persönlichen Kontostände oder Buchungsnotizen.
@@ -102,5 +106,6 @@ Web-Kommandozentrale und Trophäen am Desktop sowie die Buchungsansicht bei Hand
 - **Rückblicke:** Abend oder Jahr als PNG teilen, mit allen Teilnehmern und freigeschalteten Erfolgen. Persönliche Kontostände nur nach ausdrücklicher Auswahl. App und Web verwenden dieselbe Auswertung und Grafik.
 - **Setup:** Vibration, Erfolgsanimationen und automatische Abend-Sicherungen; zehn automatische Stände, zusätzliche Sicherheitskopien vor Wiederherstellung/Umzug. Der Webserver hält die letzten zehn empfangenen Abendabschlüsse als Download bereit. Die Tischsperre schützt gegen versehentliche Berührungen, sie ist keine Zugangssperre.
 - **Tablet:** Filter behalten ihre natürliche Höhe, Kennzahlen/Rekorde ihre Inhaltshöhe. Feste Seiten berücksichtigen die Android-Taskleiste.
+- **Tischsperre:** Die Spielanzeige bleibt sichtbar. Zum Freigeben zuerst „Entsperren“, dann „Jetzt freigeben“ antippen; kein langes Halten erforderlich. App und Web verwenden dieselben zwei Schritte.
 
 Das neue App-Symbol wurde mit dem Imagegen-Werkzeug als eigenes Fan-Icon erzeugt: schwarzer/gelber Schild mit BVB-09-Anspielung und drei Würfeln, transparent, ohne Hintergrundszene. `assets/next-icon.png` ist das Vollbild; `assets/next-icon-foreground.png` enthält zusätzlichen transparenten Rand für Android-Masken. Die Web-Kommandozentrale nutzt dasselbe Motiv. Markenhinweis oben gilt weiterhin.

@@ -97,20 +97,20 @@ export function DevicePage() {
               (Kennzeichen <Badge tone="info">Neu</Badge> für 24 Stunden) – bis zu {status?.maxDevices ?? '–'} aktive Geräte.
             </p>
             <p className="muted">
-              Neu installiert oder Gerät gewechselt? Die App kommt als neues Gerät mit ihrem eigenen Stand. Danach das alte Gerät sperren – oder
-              „Gerät ersetzen“ nutzen, dann übernimmt das neue auch den Namen des alten. Ein unbekanntes Gerät? Sofort sperren.
+              Zum gemeinsamen Spielen in Next einen QR-Code des Spieltischs scannen. Für einen vollständigen Wechsel „Geräteumzug anfragen“ verwenden.
+              „Gerät ersetzen“ übernimmt nur die Gerätezuordnung, keine Buchhaltungsdaten. Unbekannte Geräte kannst du hier sperren.
             </p>
             {!isAdmin ? <Notice tone="info">Geräte umbenennen, sperren oder entfernen dürfen nur Administratoren.</Notice> : null}
           </div>
         </Card>
 
-        <Card className="span-6" icon="info" title="Jedes Gerät ist eine eigene Kasse">
+        <Card className="span-6" icon="info" title="Eigene Kasse oder gemeinsame Runde">
           <div className="prose muted">
             <p>
-              Spieler, Abende und Buchungen eines Geräts sind unabhängig von den anderen – der Server führt nichts zusammen. Oben rechts wählst du,
-              welches Gerät du ansiehst; alle Seiten und Aufträge beziehen sich darauf.
+              Eigenständige Geräte führen getrennte Kassen. Per QR gekoppelte Geräte schauen auf die Runde ihres Spieltischs;
+              freigegebene Buchungen bestätigt dieser Spieltisch. Die gemeinsame Anzeige findest du hier über den Gerätedetails.
             </p>
-            <p>Aufträge übernimmt es still beim nächsten Hintergrund-Sync (meist innerhalb von 1–15 Min.).</p>
+            <p>Für die vollständige Kommandozentrale oben den Spieltisch auswählen. Es werden keine Kassen zusammengeführt.</p>
           </div>
         </Card>
 

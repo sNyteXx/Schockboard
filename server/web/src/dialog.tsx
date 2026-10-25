@@ -70,12 +70,14 @@ export function Modal(props: {
   tone?: 'danger'
   size?: 'sm' | 'md' | 'lg'
   description?: ReactNode
+  placement?: 'bottom'
+  dismissible?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const titleId = useId()
   useDialog(ref, props.onClose, 'first-field')
   return createPortal(
-    <div className="overlay" onPointerDown={(event) => event.target === event.currentTarget && props.onClose()}>
+    <div className={`overlay ${props.placement === 'bottom' ? 'overlay-bottom' : ''}`} onPointerDown={(event) => event.target === event.currentTarget && props.onClose()}>
       <div
         ref={ref}
         className={`modal ${props.size ?? 'md'} ${props.tone ?? ''}`}
@@ -94,9 +96,9 @@ export function Modal(props: {
             <h2 id={titleId}>{props.title}</h2>
             {props.description ? <div className="dialog-description">{props.description}</div> : null}
           </div>
-          <button type="button" className="icon-btn" onClick={props.onClose} aria-label="Schließen">
+          {props.dismissible !== false ? <button type="button" className="icon-btn" onClick={props.onClose} aria-label="Schließen">
             <Icon name="close" size={17} />
-          </button>
+          </button> : null}
         </div>
         <div className="dialog-body">{props.children}</div>
         {props.footer ? <div className="dialog-foot">{props.footer}</div> : null}

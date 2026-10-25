@@ -8,6 +8,6 @@ export function WebTableLock() {
   useEffect(() => { document.documentElement.dataset.tableLocked = String(locked); return () => { delete document.documentElement.dataset.tableLocked } }, [locked])
   return <>
     <IconButton label="Tisch sperren" icon="shield" onClick={() => { setConfirm(false); setLocked(true) }} />
-    {locked ? <Modal title="Tisch gesperrt" icon="shield" onClose={() => {}} footer={confirm ? <Button onClick={() => setLocked(false)}>Bedienung jetzt freigeben</Button> : <Button variant="secondary" onClick={() => setConfirm(true)}>Entsperren</Button>}><p>Die Anzeige wird weiter aktualisiert. Die Bedienung bleibt bis zur ausdrücklichen Freigabe gesperrt.</p></Modal> : null}
+    {locked ? <Modal title="Tisch gesperrt" icon="shield" placement="bottom" dismissible={false} onClose={() => {}} footer={confirm ? <><Button variant="secondary" onClick={() => setConfirm(false)}>Gesperrt lassen</Button><Button variant="primary" onClick={() => setLocked(false)}>Jetzt freigeben</Button></> : <Button variant="primary" onClick={() => setConfirm(true)}>Entsperren</Button>}><p>{confirm ? 'Bedienung jetzt wieder freigeben?' : 'Berührschutz aktiv. Der Spielstand bleibt sichtbar und wird aktualisiert.'}</p></Modal> : null}
   </>
 }

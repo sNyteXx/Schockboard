@@ -177,6 +177,28 @@ export function connectionRoutes(deps: { store: Store; snapshots: SnapshotManage
     db.prepare("UPDATE device_transfers SET status = 'cancelled' WHERE id = ?").run(transfer.id)
     return c.json({ ok: true })
   })
+  app.get('/round', c => {
+    const guest = deviceId(c)
+    if (!guest) return bad(c, 'Gerät unbekannt.', 404)
+    const state = connectionState(store, guest), host = state.host
+    if (!host) return bad(c, 'Noch keiner Runde beigetreten.', 403)
+    if (!snapshots.has(host.deviceId)) return bad(c, 'Noch kein Datenstand verfügbar.')
+    return c.json(snapshots.withDevice(host.deviceId, () => {
+      const session = getOpenSessionOverview()
+      const detail = session ? getSessionDetail(session.id) : null
+      return { hostLabel: host.label, role: host.role, receivedAt: store.getSnapshotMeta(host.deviceId)?.receivedAt ?? null,
+        session: detail ? {
+          session: { id: detail.session.id, title: detail.session.title },
+          attendance: detail.attendance.map(({ playerId, playerName, present }) => ({ playerId, playerName, present })),
+          losses: detail.losses.map(({ playerId, isBeerRound }) => ({ playerId, isBeerRound })),
+        } : null,
+        balances: host.role === 'operator' ? getDebtSummaries() : [],
+        achievements: buildAchievements(getStatsRawData()),
+        commands: store.listCommands(host.deviceId, 100).filter(command => command.createdBy === `device:${guest}`).map(({ id, type, status, error }) => ({ id, type, status, error })),
+      }
+    }))
+  })
+
   if (!admin) {
     app.get('/transfers/:id/snapshot', c => {
       const transfer = transferById(c.req.param('id'))
@@ -197,25 +219,6 @@ export function connectionRoutes(deps: { store: Store; snapshots: SnapshotManage
         db.exec('COMMIT')
       } catch (error) { db.exec('ROLLBACK'); throw error }
       return c.json({ ok: true })
-    })
-    app.get('/round', c => {
-      const guest = deviceId(c)!, state = connectionState(store, guest), host = state.host
-      if (!host) return bad(c, 'Noch keiner Runde beigetreten.', 403)
-      if (!snapshots.has(host.deviceId)) return bad(c, 'Noch kein Datenstand verfügbar.')
-      return c.json(snapshots.withDevice(host.deviceId, () => {
-        const session = getOpenSessionOverview()
-        const detail = session ? getSessionDetail(session.id) : null
-        return { hostLabel: host.label, role: host.role, receivedAt: store.getSnapshotMeta(host.deviceId)?.receivedAt ?? null,
-          session: detail ? {
-            session: { id: detail.session.id, title: detail.session.title },
-            attendance: detail.attendance.map(({ playerId, playerName, present }) => ({ playerId, playerName, present })),
-            losses: detail.losses.map(({ playerId, isBeerRound }) => ({ playerId, isBeerRound })),
-          } : null,
-          balances: host.role === 'operator' ? getDebtSummaries() : [],
-          achievements: buildAchievements(getStatsRawData()),
-          commands: store.listCommands(host.deviceId, 100).filter(command => command.createdBy === `device:${guest}`).map(({ id, type, status, error }) => ({ id, type, status, error })),
-        }
-      }))
     })
     app.post('/round/commands', async c => {
       const guest = deviceId(c)!, parsed = roundCommandSchema.safeParse(await c.req.json().catch(() => null))
