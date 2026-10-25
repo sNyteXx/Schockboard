@@ -8,6 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export default defineConfig({
   test: {
     globals: true,
+    exclude: ['**/node_modules/**', 'server/**'],
     coverage: {
       provider: 'v8',
     },

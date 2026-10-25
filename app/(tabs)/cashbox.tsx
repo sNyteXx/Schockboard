@@ -1,23 +1,61 @@
-import { ActivityIndicator } from "react-native";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { View } from "react-native";
 
-import { Button, Card, EmptyState, Field, Notice, Screen, SectionTitle, Select, Split, Stack, StatCard, ListRow, Input } from "@/components/ui";
+import { BottomSheet } from "@/components/bottom-sheet";
+import { Alert } from "@/components/dialog";
+import { PlayerAvatar } from "@/components/avatar";
+import { BarChart, Donut, type BarDatum } from "@/components/charts";
+import {
+  AppText,
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  Chip,
+  Divider,
+  EmptyState,
+  Field,
+  InnerScroll,
+  Input,
+  KpiTile,
+  ListRow,
+  LoadError,
+  Notice,
+  Row,
+  Screen,
+  ScreenHeader,
+  Select,
+  SkeletonScreen,
+  Split,
+  Stack,
+} from "@/components/ui";
 import { formatCurrency } from "@/domain/format";
 import { cleanOptionalText, parseEuroToCents } from "@/domain/utils";
 import { useAsyncResource } from "@/hooks/use-async-resource";
+import { useDeviceLayout } from "@/hooks/use-device-layout";
 import { useRuntime } from "@/providers/runtime-provider";
 import { CashboxService } from "@/services/cashbox-service";
+import { Feedback } from "@/services/haptics";
 import { SessionService } from "@/services/session-service";
-import { colors } from "@/theme/tokens";
+import { colors, spacing } from "@/theme/tokens";
+
+const AMOUNT_PRESETS = [500, 1000, 2000];
+const WITHDRAW_PURPOSES = ["Getränke", "Snacks", "Deckel/Würfel", "Sonstiges"];
+
+function centsToInput(cents: number) {
+  return (cents / 100).toFixed(2).replace(".", ",");
+}
 
 export default function CashboxScreen() {
   const runtime = useRuntime();
+  const { isTablet } = useDeviceLayout();
   const data = useAsyncResource(
     () => ({
       cashbox: CashboxService.getCashboxSummary(),
       debtors: CashboxService.getDebtSummaries(),
       players: SessionService.listPlayers(),
       sessions: SessionService.listSessions(),
+      cashboxLabel: SessionService.getSettings().cashboxLabel,
     }),
     [runtime.dataVersion],
   );
@@ -26,6 +64,10 @@ export default function CashboxScreen() {
   const [sessionId, setSessionId] = useState("");
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawNote, setWithdrawNote] = useState("");
 
   useEffect(() => {
     if (!data.data) {
@@ -39,15 +81,44 @@ export default function CashboxScreen() {
     }
   }, [data.data, playerId]);
 
-  if (data.loading || !data.data || !runtime.account) {
-    return (
-      <Screen>
-        <ActivityIndicator color={colors.accentStrong} size="large" />
-      </Screen>
-    );
-  }
-
   const isAdvanced = runtime.viewMode === "advanced";
+
+  const derived = useMemo(() => {
+    if (!data.data) return null;
+    const open = data.data.debtors.filter((row) => row.openDebtCents > 0);
+    const credit = data.data.debtors.filter((row) => row.openDebtCents < 0);
+    const bars: BarDatum[] = open.map((row) => ({
+      id: row.playerId,
+      label: row.playerName,
+      value: row.openDebtCents,
+      display: formatCurrency(row.openDebtCents),
+      sublabel: isAdvanced ? `Verluste ${formatCurrency(row.lossCents)} · Abwesenheit ${formatCurrency(row.absenceCents)}` : row.isCore ? undefined : "Gast",
+      avatar: { id: row.playerId, name: row.playerName },
+    }));
+    const paid = data.data.cashbox.totalPaymentsCents;
+    const outstanding = data.data.cashbox.totalOutstandingCents;
+    const donut = [
+      { key: "paid", label: "Eingezahlt", value: paid, color: colors.accent, display: formatCurrency(paid) },
+      { key: "open", label: "Noch offen", value: outstanding, color: colors.danger, display: formatCurrency(outstanding) },
+    ];
+    return { open, credit, bars, donut };
+  }, [data.data, isAdvanced]);
+
+  if (data.error && !data.data) return <LoadError error={data.error} onRetry={data.reload} />;
+  if (!data.data || !derived || !runtime.account) return <SkeletonScreen variant="dashboard" />;
+
+  // Archived players can still settle what they owe.
+  const owing = new Set(data.data.debtors.filter((row) => row.openDebtCents > 0).map((row) => row.playerId));
+  const activePlayers = data.data.players.filter((player) => !player.isArchived || owing.has(player.id));
+  const { cashbox } = data.data;
+  const hasMoney = cashbox.totalPaymentsCents > 0 || cashbox.totalOutstandingCents > 0;
+
+  function openPayment(targetPlayerId: string, cents: number) {
+    Feedback.tap();
+    setPlayerId(targetPlayerId);
+    setAmount(cents > 0 ? centsToInput(cents) : "");
+    if (!isTablet) setSheetOpen(true);
+  }
 
   async function handleRecordPayment() {
     try {
@@ -62,6 +133,7 @@ export default function CashboxScreen() {
         note: cleanOptionalText(note),
         sessionId: sessionId || null,
       });
+      Feedback.success();
       runtime.bumpDataVersion();
       runtime.setFlash({
         type: "success",
@@ -70,7 +142,9 @@ export default function CashboxScreen() {
       setAmount("");
       setNote("");
       setSessionId("");
+      setSheetOpen(false);
     } catch (caught) {
+      Feedback.error();
       runtime.setFlash({
         type: "error",
         message: caught instanceof Error ? caught.message : "Zahlung konnte nicht verbucht werden.",
@@ -80,75 +154,220 @@ export default function CashboxScreen() {
     }
   }
 
-  return (
-    <Screen>
-      <Stack>
-        {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
-        <Split>
-          <StatCard label="Kassenstand" value={formatCurrency(data.data.cashbox.totalPaymentsCents)} hint="Bereits eingezahlt" />
-          <StatCard label="Offene Schulden" value={formatCurrency(data.data.cashbox.totalOutstandingCents)} hint="Noch nicht in der Kasse" />
-        </Split>
+  function handleRecordWithdrawal() {
+    try {
+      CashboxService.recordWithdrawal({
+        actor: { accountId: runtime.account!.id, username: runtime.account!.username },
+        amountCents: parseEuroToCents(withdrawAmount),
+        note: withdrawNote,
+      });
+      Feedback.success();
+      runtime.bumpDataVersion();
+      runtime.setFlash({ type: "success", message: "Entnahme verbucht." });
+      setWithdrawAmount("");
+      setWithdrawNote("");
+      setWithdrawOpen(false);
+    } catch (caught) {
+      Feedback.error();
+      Alert.alert("Entnahme nicht möglich", caught instanceof Error ? caught.message : "Entnahme konnte nicht verbucht werden.");
+    }
+  }
 
-        <Split>
-          <Card>
-            <SectionTitle eyebrow="Zahlung" title="In die Kasse buchen" />
-            <Field label="Spieler">
-              <Select
-                selectedValue={playerId}
-                onValueChange={setPlayerId}
-                items={data.data.players.filter((player) => !player.isArchived).map((player) => ({
-                  label: player.name,
-                  value: player.id,
-                }))}
-              />
-            </Field>
-            <Field label="Betrag (€)">
-              <Input value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="5,00" />
-            </Field>
-            {isAdvanced ? (
-              <Field label="Zuordnung zum Abend">
-                <Select
-                  selectedValue={sessionId}
-                  onValueChange={setSessionId}
-                  items={[
-                    { label: "Ohne Zuordnung", value: "" },
-                    ...data.data.sessions.map((session) => ({
-                      label: session.title,
-                      value: session.id,
-                    })),
-                  ]}
-                />
-              </Field>
-            ) : null}
-            <Field label="Notiz">
-              <Input value={note} onChangeText={setNote} placeholder="Optional: Bar, PayPal, Rundung ..." />
-            </Field>
-            <Button onPress={handleRecordPayment} disabled={submitting}>
-              {submitting ? "Verbucht…" : "Zahlung verbuchen"}
+  const withdrawalForm = (
+    <Stack gap={spacing.md}>
+      <AppText tone="muted">
+        {`Geld aus der Kasse nehmen, z. B. für Getränke. Die Schulden der Spieler bleiben unverändert. In der Kasse: ${formatCurrency(cashbox.cashOnHandCents)}.`}
+      </AppText>
+      <Field label="Betrag (€)">
+        <Input value={withdrawAmount} onChangeText={setWithdrawAmount} keyboardType="decimal-pad" placeholder="18,50" />
+      </Field>
+      <Field label="Wofür?">
+        <Input value={withdrawNote} onChangeText={setWithdrawNote} placeholder="Kasten Bier, Snacks …" />
+        <Row gap={spacing.xs} wrap>
+          {WITHDRAW_PURPOSES.map((purpose) => (
+            <Chip key={purpose} label={purpose} selected={withdrawNote === purpose} onPress={() => setWithdrawNote(purpose)} />
+          ))}
+        </Row>
+      </Field>
+      <Button icon="cart-outline" tone="danger" disabled={!withdrawAmount.trim() || !withdrawNote.trim()} onPress={handleRecordWithdrawal}>
+        Entnahme buchen
+      </Button>
+    </Stack>
+  );
+
+  const selectedDebt = data.data.debtors.find((row) => row.playerId === playerId)?.openDebtCents ?? 0;
+
+  const paymentForm = (
+    <Stack gap={spacing.md}>
+      <Field label="Spieler">
+        <Select
+          selectedValue={playerId}
+          onValueChange={setPlayerId}
+          items={activePlayers.map((player) => ({
+            label: player.name,
+            value: player.id,
+          }))}
+        />
+      </Field>
+      <Field label="Betrag (€)" hint={selectedDebt > 0 ? `Offen: ${formatCurrency(selectedDebt)}` : undefined}>
+        <Input value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="5,00" />
+        <Row gap={spacing.xs} wrap>
+          {selectedDebt > 0 ? (
+            <Chip label={`Alles · ${formatCurrency(selectedDebt)}`} icon="checkmark-done" selected={amount === centsToInput(selectedDebt)} onPress={() => setAmount(centsToInput(selectedDebt))} />
+          ) : null}
+          {AMOUNT_PRESETS.map((cents) => (
+            <Chip key={cents} label={formatCurrency(cents)} selected={amount === centsToInput(cents)} onPress={() => setAmount(centsToInput(cents))} />
+          ))}
+        </Row>
+      </Field>
+      {isAdvanced ? (
+        <Field label="Zuordnung zum Abend">
+          <Select
+            selectedValue={sessionId}
+            onValueChange={setSessionId}
+            items={[
+              { label: "Ohne Zuordnung", value: "" },
+              ...data.data.sessions.map((session) => ({
+                label: session.title,
+                value: session.id,
+              })),
+            ]}
+          />
+        </Field>
+      ) : null}
+      <Field label="Notiz">
+        <Input value={note} onChangeText={setNote} placeholder="Optional: Bar, PayPal, Rundung …" />
+      </Field>
+      <Button size="lg" icon="checkmark" onPress={handleRecordPayment} loading={submitting} disabled={!playerId || !amount.trim()}>
+        Zahlung verbuchen
+      </Button>
+    </Stack>
+  );
+
+  // Tablets: no page scroll – long lists scroll inside their card.
+  const scrollable = (node: React.ReactNode) =>
+    isTablet ? <InnerScroll contentStyle={{ gap: spacing.md }}>{node}</InnerScroll> : node;
+
+  const debtsCard = (
+    <Card style={isTablet ? { flex: 1, minHeight: 0 } : undefined}>
+      <CardHeader
+        overline="Offene Schulden"
+        title="Wer muss noch zahlen?"
+        icon="people-outline"
+        aside={derived.open.length ? <Badge tone="danger">{derived.open.length} offen</Badge> : <Badge tone="success" icon="checkmark">Alles bezahlt</Badge>}
+      />
+      {scrollable(<>
+      {derived.bars.length ? (
+        <BarChart
+          data={derived.bars}
+          color={colors.danger}
+          highlightFirst={false}
+          trailing={(item) => (
+            <Button size="sm" tone="secondary" icon="cash-outline" accessibilityLabel={`Zahlung für ${item.label} buchen`} onPress={() => openPayment(item.id, item.value)}>
+              Zahlen
             </Button>
-          </Card>
+          )}
+        />
+      ) : (
+        <EmptyState icon="checkmark-done-outline" title="Alles beglichen">Aktuell sind keine offenen Schulden mehr vorhanden.</EmptyState>
+      )}
+      {derived.credit.length ? (
+        <>
+          <Divider />
+          <CardHeader overline="Guthaben" title="Im Plus" icon="trending-up-outline" />
+          <View>
+            {derived.credit.map((row) => (
+              <ListRow
+                key={row.playerId}
+                leading={<PlayerAvatar id={row.playerId} name={row.playerName} size={32} />}
+                title={row.playerName}
+                detail="Hat mehr eingezahlt als offen war"
+                value={`+${formatCurrency(-row.openDebtCents)}`}
+                valueTone="success"
+              />
+            ))}
+          </View>
+        </>
+      ) : null}
+      </>)}
+    </Card>
+  );
 
-          <Card>
-            <SectionTitle eyebrow="Offene Schulden" title="Wer muss noch zahlen?" />
-            <Stack>
-              {data.data.debtors.filter((row) => row.openDebtCents > 0).length > 0 ? (
-                data.data.debtors
-                  .filter((row) => row.openDebtCents > 0)
-                  .map((row) => (
-                    <ListRow
-                      key={row.playerId}
-                      title={row.playerName}
-                      detail={isAdvanced ? `Verluste ${formatCurrency(row.lossCents)} · Abwesenheit ${formatCurrency(row.absenceCents)}` : undefined}
-                      value={formatCurrency(row.openDebtCents)}
-                    />
-                  ))
-              ) : (
-                <EmptyState>Aktuell sind keine offenen Schulden mehr vorhanden.</EmptyState>
-              )}
-            </Stack>
+  return (
+    <>
+    <Screen fixedOnTablet>
+      <ScreenHeader
+        title="Kasse"
+        context={`${data.data.cashboxLabel || "Getränkekasse"} · Zahlungen verbuchen, offene Beträge im Blick`}
+        actions={
+          <Row gap={spacing.xs}>
+            <Button size="sm" tone="secondary" icon="cart-outline" disabled={cashbox.cashOnHandCents <= 0} onPress={() => { Feedback.tap(); setWithdrawOpen(true); }}>
+              Entnahme
+            </Button>
+            {!isTablet ? <Button size="sm" icon="add" onPress={() => openPayment(playerId, 0)}>Zahlung</Button> : null}
+          </Row>
+        }
+      />
+
+      {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
+
+      <Split weights={[5, 7]}>
+        <Card>
+          <CardHeader overline="Überblick" title="Eingezahlt vs. offen" icon="pie-chart-outline" />
+          {hasMoney ? (
+            <Donut
+              data={derived.donut}
+              size={isTablet ? 160 : 136}
+              centerValue={formatCurrency(cashbox.cashOnHandCents)}
+              centerLabel="Kassenstand"
+            />
+          ) : (
+            <EmptyState icon="wallet-outline">Noch keine Buchungen in der Kasse.</EmptyState>
+          )}
+        </Card>
+        <Row gap={isTablet ? spacing.md : spacing.sm} align="stretch">
+          <KpiTile
+            tone="hero"
+            icon="wallet"
+            label="Kassenstand"
+            value={cashbox.cashOnHandCents}
+            format={formatCurrency}
+            hint={cashbox.totalWithdrawalsCents > 0
+              ? `Eingezahlt ${formatCurrency(cashbox.totalPaymentsCents)} · entnommen ${formatCurrency(cashbox.totalWithdrawalsCents)}`
+              : "Bereits eingezahlt"}
+          />
+          <KpiTile
+            icon="alert-circle-outline"
+            label="Offene Schulden"
+            value={cashbox.totalOutstandingCents}
+            format={formatCurrency}
+            valueTone={cashbox.totalOutstandingCents > 0 ? "danger" : "success"}
+            hint="Noch nicht in der Kasse"
+          />
+        </Row>
+      </Split>
+
+      {isTablet ? (
+        <Split weights={[7, 5]} fill>
+          {debtsCard}
+          <Card tone="accent" style={{ flex: 1, minHeight: 0 }}>
+            <CardHeader overline="Zahlung" title="In die Kasse buchen" icon="cash-outline" />
+            {scrollable(paymentForm)}
           </Card>
         </Split>
-      </Stack>
+      ) : (
+        <>
+          <Button tone="secondary" icon="cash-outline" onPress={() => openPayment(playerId, 0)}>Zahlung buchen</Button>
+          {debtsCard}
+        </>
+      )}
     </Screen>
+    <BottomSheet visible={sheetOpen && !isTablet} onClose={() => setSheetOpen(false)} eyebrow="Zahlung" title="In die Kasse buchen">
+      {paymentForm}
+    </BottomSheet>
+    <BottomSheet visible={withdrawOpen} onClose={() => setWithdrawOpen(false)} eyebrow="Entnahme" title="Geld aus der Kasse">
+      {withdrawalForm}
+    </BottomSheet>
+    </>
   );
 }

@@ -1,23 +1,58 @@
-import { useRouter } from "expo-router";
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
-import { useMemo, useState } from "react";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { useIsFocused, useRouter } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
+import { View } from "react-native";
 
-import { Badge, Button, Card, EmptyState, Field, Input, ListRow, Notice, Screen, SectionTitle, Split, Stack } from "@/components/ui";
+import { PlayerAvatar } from "@/components/avatar";
+import { Sparkline, StackedBar } from "@/components/charts";
+import { PressableScale } from "@/components/motion";
+import { TourTarget, TOUR_TARGETS, useTourScreen } from "@/components/tour";
+import {
+  AppText,
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  EmptyState,
+  Field,
+  Grid,
+  IconButton,
+  Input,
+  LoadError,
+  Notice,
+  Row,
+  Screen,
+  ScreenHeader,
+  SkeletonScreen,
+  Split,
+  StatTile,
+} from "@/components/ui";
+import { getSessionListCharts, type SessionPlayerTotal } from "@/db/chart-queries";
 import { formatCurrency, formatDate, formatDateTime } from "@/domain/format";
+import type { SessionOverview } from "@/domain/types";
 import { parseEuroToCents } from "@/domain/utils";
 import { useAsyncResource } from "@/hooks/use-async-resource";
+import { useDeviceLayout } from "@/hooks/use-device-layout";
 import { useRuntime } from "@/providers/runtime-provider";
+import { Feedback } from "@/services/haptics";
 import { SessionService } from "@/services/session-service";
-import { colors, radius, spacing } from "@/theme/tokens";
+import { colors, playerColor, radius, spacing } from "@/theme/tokens";
+
+const MONTHS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+
+function centsToInput(cents: number) {
+  return (cents / 100).toFixed(2).replace(".", ",");
+}
 
 export default function SessionsScreen() {
   const router = useRouter();
   const runtime = useRuntime();
-  const stakeStyles = useStakeStyles();
+  const { isTablet } = useDeviceLayout();
   const data = useAsyncResource(
     () => ({
       settings: SessionService.getSettings(),
       sessions: SessionService.listSessions(),
+      charts: getSessionListCharts(),
     }),
     [runtime.dataVersion],
   );
@@ -25,23 +60,41 @@ export default function SessionsScreen() {
   const [stake, setStake] = useState("1,00");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const focused = useIsFocused();
+  useTourScreen("sessions", focused && !!data.data);
 
-  if (data.loading || !data.data || !runtime.account) {
-    return (
-      <Screen>
-        <ActivityIndicator color={colors.accentStrong} size="large" />
-      </Screen>
-    );
-  }
+  // The configured default stake must be the starting value for new nights.
+  const configuredStake = data.data?.settings.defaultStakeCents;
+  useEffect(() => {
+    if (configuredStake !== undefined) {
+      setStake(centsToInput(configuredStake));
+    }
+  }, [configuredStake]);
 
-  const openSession = data.data.sessions.find((session) => session.status === "open") ?? null;
+  const overview = useMemo(() => {
+    if (!data.data) return null;
+    const closed = data.data.sessions.filter((session) => session.status === "closed");
+    const totalCents = closed.reduce((sum, session) => sum + session.totalLossCents, 0);
+    return { closedCount: closed.length, averageCents: closed.length ? Math.round(totalCents / closed.length) : 0 };
+  }, [data.data]);
+
+  if (data.error && !data.data) return <LoadError error={data.error} onRetry={data.reload} />;
+  if (!data.data || !overview || !runtime.account) return <SkeletonScreen variant="list" />;
+
+  const { sessions, charts } = data.data;
+  const openSession = sessions.find((session) => session.status === "open") ?? null;
   const isAdvanced = runtime.viewMode === "advanced";
   const hasOpenSession = openSession !== null;
 
   function adjustStake(delta: number) {
-    const current = parseEuroToCents(stake);
-    const next = Math.max(10, current + delta);
-    setStake((next / 100).toFixed(2).replace(".", ","));
+    let current = configuredStake ?? 100;
+    try {
+      current = parseEuroToCents(stake);
+    } catch {
+      // keep the configured default as base
+    }
+    Feedback.tap();
+    setStake(centsToInput(Math.max(10, current + delta)));
   }
 
   async function handleCreateSession() {
@@ -61,6 +114,8 @@ export default function SessionsScreen() {
         type: "success",
         message: "Spielabend angelegt.",
       });
+      setTitle("");
+      setNotes("");
       router.push(`/session/${sessionId}`);
     } catch (caught) {
       runtime.setFlash({
@@ -72,120 +127,203 @@ export default function SessionsScreen() {
     }
   }
 
+  const contextLine = overview.closedCount
+    ? `${overview.closedCount} ${overview.closedCount === 1 ? "Abend" : "Abende"} · Ø ${formatCurrency(overview.averageCents)} pro Abend`
+    : "Noch kein Abend abgeschlossen";
+
   return (
     <Screen>
-      <Stack>
-        {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
-        <Split>
-          <Card>
-            <SectionTitle
-              eyebrow="Neuer Abend"
-              title="Spielabend anlegen"
-              aside={openSession ? <Badge tone="warning">1 Abend offen</Badge> : <Badge tone="success">Bereit</Badge>}
-            />
-            <Field label="Titel">
-              <Input value={title} onChangeText={setTitle} editable={!hasOpenSession} />
-            </Field>
-            <Field label="Einsatz pro Verlust (€)">
-              <View style={stakeStyles.row}>
-                <Pressable
-                  onPress={() => adjustStake(-50)}
-                  disabled={hasOpenSession}
-                  style={({ pressed }) => [stakeStyles.btn, pressed && stakeStyles.btnPressed]}
-                >
-                  <Text style={stakeStyles.btnText}>−</Text>
-                </Pressable>
-                <Input
-                  value={stake}
-                  onChangeText={setStake}
-                  keyboardType="decimal-pad"
-                  editable={!hasOpenSession}
-                  style={{ flex: 1, textAlign: "center" }}
-                />
-                <Pressable
-                  onPress={() => adjustStake(50)}
-                  disabled={hasOpenSession}
-                  style={({ pressed }) => [stakeStyles.btn, pressed && stakeStyles.btnPressed]}
-                >
-                  <Text style={stakeStyles.btnText}>＋</Text>
-                </Pressable>
-              </View>
-            </Field>
-            {isAdvanced ? (
-              <Field label="Notiz">
-                <Input multiline value={notes} onChangeText={setNotes} placeholder="Optional: Ort, Anlass oder Hausregel-Hinweis" />
-              </Field>
-            ) : null}
-            <Button onPress={handleCreateSession} disabled={submitting || hasOpenSession}>
-              {hasOpenSession ? "Erst offenen Abend abschließen" : submitting ? "Speichere…" : "Spielabend starten"}
-            </Button>
-          </Card>
+      <ScreenHeader
+        title="Spielabende"
+        context={contextLine}
+        actions={
+          charts.totals.length > 1 ? (
+            <View style={{ width: isTablet ? 180 : 96 }} accessibilityLabel="Verlauf der Abendsummen">
+              <Sparkline data={charts.totals} height={isTablet ? 36 : 28} color={colors.accent} />
+            </View>
+          ) : null
+        }
+      />
 
-          <Card tone="accent">
-            <SectionTitle eyebrow="Status" title="Aktueller Fokus" />
-            {openSession ? (
-              <Stack>
-                <Text style={{ color: colors.text, fontWeight: "700" }}>{openSession.title}</Text>
-                <Text style={{ color: colors.muted }}>{formatDateTime(openSession.startedAt)}</Text>
-                <Text style={{ color: colors.muted }}>
-                  {openSession.presentCount} anwesend · {openSession.lossCount} Verluste · {formatCurrency(openSession.stakeCents)} Einsatz
-                </Text>
-                <Button onPress={() => router.push(`/session/${openSession.id}`)}>Abend öffnen</Button>
-              </Stack>
-            ) : (
-              <EmptyState>Noch kein offener Abend. Beim Anlegen werden alle aktiven Stammspieler automatisch geladen.</EmptyState>
-            )}
-          </Card>
-        </Split>
+      {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
 
+      <Split weights={[5, 7]}>
         <Card>
-          <SectionTitle eyebrow="Historie" title="Alle Spielabende" />
-          <Stack>
-            {data.data.sessions.length > 0 ? (
-              data.data.sessions.map((session) => (
-                <Card key={session.id}>
-                  <SectionTitle
-                    eyebrow="Spielabend"
-                    title={session.title}
-                    aside={<Badge tone={session.status === "open" ? "success" : "default"}>{session.status === "open" ? "Offen" : "Abgeschlossen"}</Badge>}
-                  />
-                  <Text style={{ color: colors.muted }}>
-                    {formatDate(session.startedAt)}
-                    {session.closedAt ? ` bis ${formatDate(session.closedAt)}` : ""}
-                  </Text>
-                  {isAdvanced ? (
-                    <Text style={{ color: colors.muted }}>
-                      {formatCurrency(session.stakeCents)} Einsatz · {session.lossCount} Verluste · {formatCurrency(session.totalAbsenceCents)} Abwesenheit
-                    </Text>
-                  ) : null}
-                  <Button tone="secondary" onPress={() => router.push(`/session/${session.id}`)}>
-                    Öffnen
-                  </Button>
-                </Card>
-              ))
-            ) : (
-              <EmptyState>Es wurden noch keine Spielabende erfasst.</EmptyState>
-            )}
-          </Stack>
+          <CardHeader
+            overline="Neuer Abend"
+            title="Spielabend anlegen"
+            icon="add-circle-outline"
+            aside={hasOpenSession ? <Badge tone="warning">1 Abend offen</Badge> : <Badge tone="success">Bereit</Badge>}
+          />
+          {hasOpenSession ? (
+            <View style={{ flexDirection: "row", gap: spacing.sm, alignItems: "center", padding: spacing.sm, borderRadius: radius.md, backgroundColor: colors.warningSoft }}>
+              <Ionicons name="information-circle" size={20} color={colors.warning} />
+              <AppText variant="caption" style={{ flex: 1 }}>Es läuft bereits ein Abend. Schließe ihn ab, bevor du einen neuen startest.</AppText>
+            </View>
+          ) : null}
+          <Field label="Titel">
+            <Input
+              value={title}
+              onChangeText={setTitle}
+              editable={!hasOpenSession}
+              placeholder={`Schockabend ${formatDate(new Date().toISOString())}`}
+            />
+          </Field>
+          <Field label="Einsatz pro Verlust (€)">
+            <Row gap={spacing.sm}>
+              <IconButton icon="remove" size={48} accessibilityLabel="Einsatz verringern" onPress={() => adjustStake(-50)} disabled={hasOpenSession} />
+              <Input
+                value={stake}
+                onChangeText={setStake}
+                keyboardType="decimal-pad"
+                editable={!hasOpenSession}
+                style={{ flex: 1, textAlign: "center" }}
+              />
+              <IconButton icon="add" size={48} accessibilityLabel="Einsatz erhöhen" onPress={() => adjustStake(50)} disabled={hasOpenSession} />
+            </Row>
+          </Field>
+          {isAdvanced ? (
+            <Field label="Notiz">
+              <Input multiline value={notes} onChangeText={setNotes} placeholder="Optional: Ort, Anlass oder Hausregel-Hinweis" editable={!hasOpenSession} />
+            </Field>
+          ) : null}
+          {hasOpenSession ? (
+            <TourTarget id={TOUR_TARGETS.sessionsCreate} onPress={() => router.push(`/session/${openSession.id}`)}>
+              <Button tone="secondary" icon="play" onPress={() => router.push(`/session/${openSession.id}`)}>Offenen Abend öffnen</Button>
+            </TourTarget>
+          ) : (
+            <TourTarget id={TOUR_TARGETS.sessionsCreate} onPress={() => { if (!submitting) void handleCreateSession(); }}>
+              <Button size="lg" icon="play" onPress={handleCreateSession} loading={submitting}>Spielabend starten</Button>
+            </TourTarget>
+          )}
+          {!hasOpenSession ? (
+            <AppText variant="caption" tone="subtle">Alle aktiven Stammspieler werden automatisch geladen.</AppText>
+          ) : null}
         </Card>
-      </Stack>
+
+        {openSession ? (
+          <Card tone="hero">
+            <CardHeader overline={`Seit ${formatDateTime(openSession.startedAt)}`} title={openSession.title} icon="radio-outline" aside={<Badge tone="success" dot>LIVE</Badge>} />
+            <Row gap={spacing.xs}>
+              <StatTile label="Am Tisch" value={`${openSession.presentCount}`} icon="people-outline" />
+              <StatTile label="Verluste" value={`${openSession.lossCount}`} icon="trending-down-outline" />
+              <StatTile label="Einsatz" value={formatCurrency(openSession.stakeCents)} icon="pricetag-outline" />
+            </Row>
+            <SessionShare rows={charts.breakdown.get(openSession.id) ?? []} />
+            <Button size="lg" icon="grid" iconRight="arrow-forward" onPress={() => router.push(`/session/${openSession.id}`)}>Weiterspielen</Button>
+          </Card>
+        ) : (
+          <Card>
+            <CardHeader overline="Status" title="Kein Abend offen" icon="moon-outline" />
+            <EmptyState icon="dice-outline" title="Bereit für die nächste Runde">
+              Lege links einen Abend an – danach geht es direkt zur Anwesenheit und aufs Live-Brett.
+            </EmptyState>
+          </Card>
+        )}
+      </Split>
+
+      <CardHeader overline="Historie" title="Alle Spielabende" aside={<Badge>{sessions.length}</Badge>} />
+      {sessions.length ? (
+        <Grid columns={{ compact: 1, medium: 2, expanded: 2 }} gap={spacing.sm}>
+          {sessions.map((session) => (
+            <SessionRow
+              key={session.id}
+              session={session}
+              breakdown={charts.breakdown.get(session.id) ?? []}
+              isAdvanced={isAdvanced}
+              onPress={() => router.push(`/session/${session.id}`)}
+            />
+          ))}
+        </Grid>
+      ) : (
+        <Card>
+          <EmptyState icon="calendar-outline" title="Noch keine Abende">Es wurden noch keine Spielabende erfasst.</EmptyState>
+        </Card>
+      )}
     </Screen>
   );
 }
 
-function useStakeStyles() {
-  return useMemo(
-    () =>
-      StyleSheet.create({
-        row: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-        btn: {
-          width: 48, height: 48, borderRadius: radius.pill,
-          backgroundColor: colors.surfaceSoft, borderWidth: 1, borderColor: colors.border,
-          alignItems: "center", justifyContent: "center",
-        },
-        btnPressed: { backgroundColor: colors.accent, transform: [{ scale: 0.95 }] },
-        btnText: { fontSize: 22, fontWeight: "800", color: colors.accentStrong },
-      }),
-    [colors.id],
+/** Stacked share bar + overlapping avatars of the evening's biggest payers. */
+function SessionShare({ rows }: { rows: SessionPlayerTotal[] }) {
+  const segments = useMemo(
+    () => rows.map((row) => ({ key: row.playerId, value: row.totalCents, color: playerColor(row.playerId) })),
+    [rows],
+  );
+  if (!rows.length) return null;
+  const shown = rows.slice(0, 4);
+  return (
+    <Row gap={spacing.sm}>
+      <View style={{ flexDirection: "row" }}>
+        {shown.map((row, index) => (
+          <View key={row.playerId} style={{ marginLeft: index === 0 ? 0 : -8, borderRadius: 13, borderWidth: 2, borderColor: colors.bgElevated }}>
+            <PlayerAvatar id={row.playerId} name={row.playerName} size={22} />
+          </View>
+        ))}
+        {rows.length > shown.length ? <AppText variant="caption" tone="subtle" style={{ marginLeft: 4, alignSelf: "center" }}>+{rows.length - shown.length}</AppText> : null}
+      </View>
+      <View style={{ flex: 1 }}>
+        <StackedBar segments={segments} height={6} />
+      </View>
+    </Row>
+  );
+}
+
+function SessionRow({
+  session,
+  breakdown,
+  isAdvanced,
+  onPress,
+}: {
+  session: SessionOverview;
+  breakdown: SessionPlayerTotal[];
+  isAdvanced: boolean;
+  onPress: () => void;
+}) {
+  const date = new Date(session.startedAt);
+  const live = session.status === "open";
+  const meta = [
+    `${session.lossCount} Verluste`,
+    `${formatCurrency(session.stakeCents)} Einsatz`,
+    isAdvanced ? `Abwesenheit ${formatCurrency(session.totalAbsenceCents)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <PressableScale
+      accessibilityRole="button"
+      accessibilityLabel={`${session.title} öffnen`}
+      onPress={onPress}
+      pressedScale={0.985}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.sm,
+        padding: spacing.sm,
+        borderRadius: radius.lg,
+        backgroundColor: colors.bgElevated,
+        borderWidth: 1,
+        borderColor: live ? colors.accent : colors.border,
+      }}
+    >
+      <View style={{ width: 52, alignItems: "center", paddingVertical: spacing.xxs, borderRadius: radius.md, backgroundColor: live ? colors.accentSoft : colors.surface }}>
+        <AppText variant="numericLg" tone={live ? "accent" : "default"}>{date.getDate()}</AppText>
+        <AppText variant="overline" tone="muted">{MONTHS[date.getMonth()]}</AppText>
+      </View>
+      <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
+        <Row gap={spacing.xs}>
+          <AppText variant="bodyStrong" numberOfLines={1} style={{ flexShrink: 1 }}>{session.title}</AppText>
+          {live ? <Badge tone="success" dot>LIVE</Badge> : <Badge>Beendet</Badge>}
+        </Row>
+        <AppText variant="caption" tone="muted" numberOfLines={1}>{meta}</AppText>
+        <SessionShare rows={breakdown} />
+      </View>
+      <View style={{ alignItems: "flex-end", gap: 2 }}>
+        <AppText variant="numericSm">{formatCurrency(session.totalLossCents + session.totalAbsenceCents)}</AppText>
+        <AppText variant="caption" tone="subtle">{date.getFullYear()}</AppText>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color={colors.subtle} />
+    </PressableScale>
   );
 }

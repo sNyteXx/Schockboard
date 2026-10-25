@@ -1,36 +1,50 @@
 {
   "expo": {
-    "name": "Schockboard",
-    "slug": "schockboard-apk",
-    "version": "1.1.5",
-    "scheme": "schockboard",
-    "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "name": "Schockboard Next",
+    "slug": "schockboard-next",
+    "version": "2.0.0",
+    "scheme": "schockboard-next",
+    "orientation": "default",
+    "icon": "./assets/next-icon.png",
     "userInterfaceStyle": "dark",
     "experiments": {
       "typedRoutes": true
     },
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/next-icon-foreground.png",
       "resizeMode": "contain",
-      "backgroundColor": "#130f0b"
+      "backgroundColor": "#101210"
     },
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "package": "de.schockboard.apk",
+      "package": "de.schockboard.next",
+      "versionCode": 209,
       "adaptiveIcon": {
-        "backgroundColor": "#130f0b",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#101210",
+        "foregroundImage": "./assets/next-icon-foreground.png",
+        "monochromeImage": "./assets/next-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/next-icon.png"
     },
-    "plugins": ["expo-router", "expo-sqlite", "expo-secure-store", "expo-sharing", "expo-font"]
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      "expo-secure-store",
+      "expo-sharing",
+      "expo-font",
+      "expo-background-task",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Schockboard benötigt die Kamera zum Scannen einer Geräte-Einladung.",
+          "recordAudioAndroid": false
+        }
+      ]
+    ]
   }
 }

@@ -1,4 +1,5 @@
-import { calculateAbsenceAverageCents, sortDebtors } from '@/domain/ledger'
+import { assertWritable } from '@/domain/write-access'
+import { calculateAbsenceChargeCents, getVoidedLossCorrectionCents, sortDebtors } from '@/domain/ledger'
 import { SCHOCK_RULE_PROFILE } from '@/domain/rules'
 import type {
   AbsencePenaltyMode,
@@ -17,7 +18,7 @@ import type {
 } from '@/domain/types'
 import { nowIso, slugify } from '@/domain/utils'
 import { ensureDatabaseReady } from '@/db/bootstrap'
-import { sqliteAll, sqliteGet, sqliteRun } from '@/db/client'
+import { getSqlite, sqliteAll, sqliteGet, sqliteRun } from '@/db/client'
 import { createId } from '@/services/id'
 
 type RawPlayerDebtRow = {
@@ -92,6 +93,21 @@ function getAbsenceChargeNote(input: {
   return `Jeder abwesende Stammspieler erhält den vollen Durchschnitt aus ${input.presentCoreCount} anwesenden Stammspielern.`
 }
 
+// Set while the admin web applies changes: they must not leave traces in
+// the app's own log (the admin keeps the command history on the server).
+let auditSuppressed = false
+
+/** Runs `task` without writing audit events (used for admin overrides). */
+export function runWithoutAudit<T>(task: () => T): T {
+  const previous = auditSuppressed
+  auditSuppressed = true
+  try {
+    return task()
+  } finally {
+    auditSuppressed = previous
+  }
+}
+
 export function createAuditEvent(input: {
   actorAccountId?: string | null
   eventType: string
@@ -101,6 +117,7 @@ export function createAuditEvent(input: {
   payload: Record<string, unknown>
 }) {
   ensureDatabaseReady()
+  if (auditSuppressed) return
 
   sqliteRun(
     `
@@ -140,8 +157,11 @@ export function getAppSettings(): AppSettingsRecord {
     view_mode: string
     theme_id: string
     absence_penalty_mode: string
+    haptics_enabled: number
+    achievement_animations: number
+    auto_backup: number
   }>(
-    "SELECT default_stake_cents, currency, cashbox_label, rule_profile_json, view_mode, theme_id, absence_penalty_mode FROM app_settings WHERE id = 'app'"
+    "SELECT default_stake_cents, currency, cashbox_label, rule_profile_json, view_mode, theme_id, absence_penalty_mode, haptics_enabled, achievement_animations, auto_backup FROM app_settings WHERE id = 'app'"
   )
 
   if (!row) {
@@ -151,8 +171,9 @@ export function getAppSettings(): AppSettingsRecord {
       cashboxLabel: 'Getränkekasse',
       ruleProfile: SCHOCK_RULE_PROFILE,
       viewMode: 'basic',
-      themeId: 'original',
+      themeId: 'bvb09',
       absencePenaltyMode: 'full_average',
+      hapticsEnabled: true, achievementAnimations: true, autoBackup: true,
     }
   }
 
@@ -162,7 +183,10 @@ export function getAppSettings(): AppSettingsRecord {
     cashboxLabel: row.cashbox_label,
     ruleProfile: JSON.parse(row.rule_profile_json),
     viewMode: (row.view_mode as ViewMode) ?? 'basic',
-    themeId: (row.theme_id as ThemeId) ?? 'original',
+    themeId: (row.theme_id as ThemeId) ?? 'bvb09',
+    hapticsEnabled: Boolean(row.haptics_enabled),
+    achievementAnimations: Boolean(row.achievement_animations),
+    autoBackup: Boolean(row.auto_backup),
     absencePenaltyMode: (row.absence_penalty_mode as AbsencePenaltyMode) ?? 'full_average',
   }
 }
@@ -173,7 +197,11 @@ export function updateAppSettings(input: {
   cashboxLabel: string
   absencePenaltyMode: AbsencePenaltyMode
   viewMode?: ViewMode
+  hapticsEnabled?: boolean
+  achievementAnimations?: boolean
+  autoBackup?: boolean
 }) {
+  assertWritable()
   const sets = [
     'default_stake_cents = $defaultStakeCents',
     'cashbox_label = $cashboxLabel',
@@ -185,6 +213,14 @@ export function updateAppSettings(input: {
     $cashboxLabel: input.cashboxLabel,
     $absencePenaltyMode: input.absencePenaltyMode,
     $updatedAt: nowIso(),
+  }
+
+  for (const [key, column] of [['hapticsEnabled', 'haptics_enabled'], ['achievementAnimations', 'achievement_animations'], ['autoBackup', 'auto_backup']] as const) {
+    if (input[key] !== undefined) {
+      if (typeof input[key] !== 'boolean') throw new Error('Ungültige Einstellung.')
+      sets.push(`${column} = $${key}`)
+      params[`$${key}`] = input[key] ? 1 : 0
+    }
   }
 
   if (input.viewMode) {
@@ -209,6 +245,7 @@ export function updateAppSettings(input: {
 }
 
 export function updateViewMode(input: { actor: Actor; viewMode: ViewMode }) {
+  assertWritable()
   sqliteRun(
     `UPDATE app_settings SET view_mode = $viewMode, updated_at = $updatedAt WHERE id = 'app'`,
     {
@@ -219,6 +256,7 @@ export function updateViewMode(input: { actor: Actor; viewMode: ViewMode }) {
 }
 
 export function updateTheme(input: { actor: Actor; themeId: ThemeId }) {
+  assertWritable()
   sqliteRun(
     `UPDATE app_settings SET theme_id = $themeId, updated_at = $updatedAt WHERE id = 'app'`,
     {
@@ -245,8 +283,42 @@ function ensureUniquePlayerSlug(baseName: string) {
   return slug
 }
 
+/*
+ * Player rules (single source of truth for app and admin web):
+ * - active = not archived; Stammspieler = active + core; Gast = active + not core.
+ * - A new evening loads all active Stammspieler as present.
+ * - Archived players never take part in an evening: they get no absence
+ *   charge and never count for the average. Archiving someone who is in the
+ *   open evening removes them from it – refused if they have bookings there.
+ * - A Stammspieler created or reactivated while an evening is open joins it.
+ * - Adding a guest by name reuses an existing player with that name instead
+ *   of creating a duplicate (and reactivates them if archived).
+ * - Balances of archived players stay visible and payable.
+ */
+
+function getOpenSessionId() {
+  return sqliteGet<{ id: string }>("SELECT id FROM sessions WHERE status = 'open' ORDER BY started_at DESC LIMIT 1")?.id ?? null
+}
+
+function addToSession(sessionId: string, playerId: string) {
+  const now = nowIso()
+  sqliteRun(
+    `
+      INSERT INTO session_attendance (id, session_id, player_id, present, created_at, updated_at)
+      VALUES ($id, $sessionId, $playerId, 1, $now, $now)
+      ON CONFLICT (session_id, player_id) DO UPDATE SET present = 1, updated_at = $now
+    `,
+    { $id: createId('attendance'), $sessionId: sessionId, $playerId: playerId, $now: now }
+  )
+}
+
 export function createPlayer(input: { name: string; isCore: boolean; actor: Actor }) {
+  assertWritable()
   ensureDatabaseReady()
+  const name = input.name.trim()
+  if (!name) throw new Error('Bitte einen Namen eingeben.')
+  const duplicate = sqliteGet<{ id: string }>('SELECT id FROM players WHERE lower(name) = lower($name) LIMIT 1', { $name: name })
+  if (duplicate) throw new Error(`„${name}“ gibt es schon – ggf. unter „Archiviert“ reaktivieren.`)
 
   const playerId = createId('player')
   const now = nowIso()
@@ -258,8 +330,8 @@ export function createPlayer(input: { name: string; isCore: boolean; actor: Acto
     `,
     {
       $id: playerId,
-      $name: input.name,
-      $slug: ensureUniquePlayerSlug(input.name),
+      $name: name,
+      $slug: ensureUniquePlayerSlug(name),
       $isCore: input.isCore ? 1 : 0,
       $createdAt: now,
       $updatedAt: now,
@@ -272,10 +344,13 @@ export function createPlayer(input: { name: string; isCore: boolean; actor: Acto
     entityId: playerId,
     eventType: input.isCore ? 'player.core_created' : 'player.guest_created',
     payload: {
-      name: input.name,
+      name,
       isCore: input.isCore,
     },
   })
+
+  const openSessionId = input.isCore ? getOpenSessionId() : null
+  if (openSessionId) addToSession(openSessionId, playerId)
 
   return playerId
 }
@@ -286,6 +361,7 @@ export function updatePlayerFlags(input: {
   isCore?: boolean
   isArchived?: boolean
 }) {
+  assertWritable()
   const existing = sqliteGet<{
     is_core: number
     is_archived: number
@@ -300,6 +376,26 @@ export function updatePlayerFlags(input: {
   const next = {
     isCore: input.isCore ?? Boolean(existing.is_core),
     isArchived: input.isArchived ?? Boolean(existing.is_archived),
+  }
+  const openSessionId = getOpenSessionId()
+
+  if (openSessionId && next.isArchived && !existing.is_archived) {
+    const booked = sqliteGet<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM loss_entries WHERE session_id = $sessionId AND player_id = $playerId',
+      { $sessionId: openSessionId, $playerId: input.playerId }
+    )
+    if (booked && booked.n > 0) {
+      throw new Error('Spieler hat am laufenden Abend Buchungen – erst nach dem Abschluss archivieren.')
+    }
+    sqliteRun('DELETE FROM session_attendance WHERE session_id = $sessionId AND player_id = $playerId', {
+      $sessionId: openSessionId,
+      $playerId: input.playerId,
+    })
+  }
+
+  // Reactivated (or promoted) regulars join the evening that is running now.
+  if (openSessionId && !next.isArchived && next.isCore && (existing.is_archived || !existing.is_core)) {
+    addToSession(openSessionId, input.playerId)
   }
 
   sqliteRun(
@@ -328,6 +424,7 @@ export function updatePlayerFlags(input: {
 }
 
 export function deletePlayer(input: { actor: Actor; playerId: string }) {
+  assertWritable()
   const existing = sqliteGet<{ name: string }>(
     'SELECT name FROM players WHERE id = $playerId LIMIT 1',
     { $playerId: input.playerId }
@@ -337,41 +434,38 @@ export function deletePlayer(input: { actor: Actor; playerId: string }) {
     throw new Error('Spieler nicht gefunden.')
   }
 
-  const openAttendance = sqliteGet<{ cnt: number }>(
+  // Only bookings at the running evening block deletion; mere attendance
+  // there is removed together with the player (same rule as archiving).
+  const openBookings = sqliteGet<{ cnt: number }>(
     `
       SELECT COUNT(*) AS cnt
-      FROM session_attendance sa
-      INNER JOIN sessions s ON s.id = sa.session_id
-      WHERE sa.player_id = $playerId AND s.status = 'open'
+      FROM loss_entries le
+      INNER JOIN sessions s ON s.id = le.session_id
+      WHERE le.player_id = $playerId AND s.status = 'open'
     `,
     { $playerId: input.playerId }
   )
 
-  if (openAttendance && openAttendance.cnt > 0) {
+  if (openBookings && openBookings.cnt > 0) {
     throw new Error(
-      'Der Spieler ist einem offenen Spielabend zugeordnet und kann nicht gelöscht werden.'
+      `${existing.name} hat am laufenden Abend Buchungen – erst stornieren oder den Abend abschließen, dann löschen.`
     )
   }
 
-  sqliteRun('DELETE FROM loss_entries WHERE player_id = $playerId', { $playerId: input.playerId })
-  sqliteRun('DELETE FROM absence_charges WHERE player_id = $playerId', {
-    $playerId: input.playerId,
-  })
-  sqliteRun('DELETE FROM payments WHERE player_id = $playerId', { $playerId: input.playerId })
-  sqliteRun('DELETE FROM corrections WHERE player_id = $playerId', { $playerId: input.playerId })
-  sqliteRun('DELETE FROM session_attendance WHERE player_id = $playerId', {
-    $playerId: input.playerId,
-  })
-  sqliteRun('DELETE FROM players WHERE id = $playerId', { $playerId: input.playerId })
-
-  createAuditEvent({
-    actorAccountId: input.actor.accountId,
-    entityType: 'player',
-    entityId: input.playerId,
-    eventType: 'player.deleted',
-    payload: {
-      name: existing.name,
-    },
+  getSqlite().withTransactionSync(() => {
+    sqliteRun('DELETE FROM loss_entries WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM absence_charges WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM payments WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM corrections WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM session_attendance WHERE player_id = $playerId', { $playerId: input.playerId })
+    sqliteRun('DELETE FROM players WHERE id = $playerId', { $playerId: input.playerId })
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'player',
+      entityId: input.playerId,
+      eventType: 'player.deleted',
+      payload: { name: existing.name },
+    })
   })
 }
 
@@ -426,7 +520,7 @@ export function getDebtSummaries() {
         FROM session_attendance sa2
         INNER JOIN players p2 ON p2.id = sa2.player_id
         INNER JOIN sessions s2 ON s2.id = sa2.session_id
-        WHERE sa2.present = 1 AND p2.is_core = 1 AND s2.status = 'open'
+        WHERE sa2.present = 1 AND p2.is_core = 1 AND p2.is_archived = 0 AND s2.status = 'open'
         GROUP BY sa2.session_id
       ),
       absent_core_counts AS (
@@ -434,7 +528,7 @@ export function getDebtSummaries() {
         FROM session_attendance sa4
         INNER JOIN players p4 ON p4.id = sa4.player_id
         INNER JOIN sessions s4 ON s4.id = sa4.session_id
-        WHERE sa4.present = 0 AND p4.is_core = 1 AND s4.status = 'open'
+        WHERE sa4.present = 0 AND p4.is_core = 1 AND p4.is_archived = 0 AND s4.status = 'open'
         GROUP BY sa4.session_id
       ),
       present_core_loss_totals AS (
@@ -443,7 +537,7 @@ export function getDebtSummaries() {
         INNER JOIN session_attendance sa3 ON sa3.session_id = le.session_id AND sa3.player_id = le.player_id
         INNER JOIN players p3 ON p3.id = le.player_id
         INNER JOIN sessions s3 ON s3.id = le.session_id
-        WHERE sa3.present = 1 AND p3.is_core = 1 AND s3.status = 'open' AND le.is_beer_round = 0
+        WHERE sa3.present = 1 AND p3.is_core = 1 AND p3.is_archived = 0 AND s3.status = 'open' AND le.is_beer_round = 0
         GROUP BY le.session_id
       ),
       pending_absence_totals AS (
@@ -454,7 +548,7 @@ export function getDebtSummaries() {
             CASE
               WHEN $absencePenaltyMode = 'none' THEN 0
               WHEN $absencePenaltyMode = 'split_absent'
-                THEN CAST(ROUND(1.0 * COALESCE(pl.total_present_core_loss_cents, 0) / pc.present_core_count / ac.absent_core_count) AS INTEGER)
+                THEN CAST(ROUND(1.0 * ROUND(1.0 * COALESCE(pl.total_present_core_loss_cents, 0) / pc.present_core_count) / ac.absent_core_count) AS INTEGER)
               ELSE CAST(ROUND(1.0 * COALESCE(pl.total_present_core_loss_cents, 0) / pc.present_core_count) AS INTEGER)
             END AS amount_cents
           FROM session_attendance sa
@@ -466,6 +560,7 @@ export function getDebtSummaries() {
           WHERE s.status = 'open'
             AND sa.present = 0
             AND absent_player.is_core = 1
+            AND absent_player.is_archived = 0
             AND pc.present_core_count > 0
             AND ac.absent_core_count > 0
             AND COALESCE(pl.total_present_core_loss_cents, 0) > 0
@@ -519,14 +614,20 @@ export function getCashboxSummary(): CashboxSummary {
   const row = sqliteGet<{ total_payments_cents: number }>(
     'SELECT COALESCE(SUM(amount_cents), 0) AS total_payments_cents FROM payments'
   )
-  const totalOutstandingCents = getDebtSummaries().reduce(
-    (sum, debtor) => sum + debtor.openDebtCents,
-    0
-  )
+  // Per player: one person's credit must not hide another person's debt.
+  const balances = getDebtSummaries().map((debtor) => debtor.openDebtCents)
+  const totalOutstandingCents = balances.filter((cents) => cents > 0).reduce((sum, cents) => sum + cents, 0)
+  const totalCreditCents = balances.filter((cents) => cents < 0).reduce((sum, cents) => sum - cents, 0)
+
+  const withdrawn = sqliteGet<{ cents: number }>('SELECT COALESCE(SUM(amount_cents), 0) AS cents FROM cashbox_withdrawals')?.cents ?? 0
+  const totalPaymentsCents = row?.total_payments_cents ?? 0
 
   return {
-    totalPaymentsCents: row?.total_payments_cents ?? 0,
+    totalPaymentsCents,
     totalOutstandingCents,
+    totalCreditCents,
+    totalWithdrawalsCents: withdrawn,
+    cashOnHandCents: totalPaymentsCents - withdrawn,
   }
 }
 
@@ -661,6 +762,23 @@ export function getHistoryEntries(filters: HistoryFilters & { sessionId?: string
         UNION ALL
 
         SELECT
+          w.id,
+          'withdrawal' AS kind,
+          w.created_at,
+          NULL AS player_id,
+          NULL AS player_name,
+          w.amount_cents,
+          w.note AS message,
+          s.id AS session_id,
+          s.title AS session_title,
+          a.username AS actor_username
+        FROM cashbox_withdrawals w
+        LEFT JOIN sessions s ON s.id = w.session_id
+        INNER JOIN auth_accounts a ON a.id = w.created_by_account_id
+
+        UNION ALL
+
+        SELECT
           ae.id,
           'audit' AS kind,
           ae.created_at,
@@ -720,6 +838,7 @@ export function createSession(input: {
   notes: string | null
   stakeCents: number
 }) {
+  assertWritable()
   const openSession = getOpenSessionOverview()
 
   if (openSession) {
@@ -939,6 +1058,7 @@ export function getSessionDetail(sessionId: string): SessionDetail | null {
 }
 
 export function toggleAttendance(input: { actor: Actor; sessionId: string; playerId: string }) {
+  assertWritable()
   const row = sqliteGet<{ id: string; present: number }>(
     `
       SELECT id, present
@@ -969,6 +1089,18 @@ export function toggleAttendance(input: { actor: Actor; sessionId: string; playe
 
   const nextValue = row.present ? 0 : 1
 
+  // Marking someone absent who already has bookings tonight would also charge
+  // them an absence fee at close; their entries must be voided first.
+  if (nextValue === 0) {
+    const booked = sqliteGet<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM loss_entries WHERE session_id = $sessionId AND player_id = $playerId',
+      { $sessionId: input.sessionId, $playerId: input.playerId }
+    )
+    if (booked && booked.n > 0) {
+      throw new Error('Spieler hat heute schon Buchungen – erst stornieren, dann als abwesend markieren.')
+    }
+  }
+
   sqliteRun(
     `
       UPDATE session_attendance
@@ -997,6 +1129,7 @@ export function toggleAttendance(input: { actor: Actor; sessionId: string; playe
 }
 
 export function addGuestToSession(input: { actor: Actor; sessionId: string; name: string }) {
+  assertWritable()
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     {
@@ -1008,26 +1141,30 @@ export function addGuestToSession(input: { actor: Actor; sessionId: string; name
     throw new Error('Gäste können nur in offene Spielabende aufgenommen werden.')
   }
 
-  const playerId = createPlayer({
-    name: input.name,
-    isCore: false,
-    actor: input.actor,
-  })
+  const name = input.name.trim()
+  if (!name) throw new Error('Bitte einen Namen eingeben.')
 
-  const now = nowIso()
-  sqliteRun(
-    `
-      INSERT INTO session_attendance (id, session_id, player_id, present, created_at, updated_at)
-      VALUES ($id, $sessionId, $playerId, 1, $createdAt, $updatedAt)
-    `,
-    {
-      $id: createId('attendance'),
-      $sessionId: input.sessionId,
-      $playerId: playerId,
-      $createdAt: now,
-      $updatedAt: now,
-    }
+  // Same guest next week = same player (one balance, one statistic).
+  const known = sqliteGet<{ id: string; is_archived: number }>(
+    'SELECT id, is_archived FROM players WHERE lower(name) = lower($name) LIMIT 1',
+    { $name: name }
   )
+  let playerId: string
+  if (known) {
+    const already = sqliteGet<{ present: number }>(
+      'SELECT present FROM session_attendance WHERE session_id = $sessionId AND player_id = $playerId',
+      { $sessionId: input.sessionId, $playerId: known.id }
+    )
+    if (already?.present) throw new Error(`${name} ist heute schon dabei.`)
+    if (known.is_archived) {
+      sqliteRun('UPDATE players SET is_archived = 0, updated_at = $now WHERE id = $id', { $id: known.id, $now: nowIso() })
+    }
+    playerId = known.id
+  } else {
+    playerId = createPlayer({ name, isCore: false, actor: input.actor })
+  }
+
+  addToSession(input.sessionId, playerId)
 
   createAuditEvent({
     actorAccountId: input.actor.accountId,
@@ -1037,12 +1174,14 @@ export function addGuestToSession(input: { actor: Actor; sessionId: string; name
     eventType: 'session.guest_added',
     payload: {
       playerId,
-      name: input.name,
+      name,
+      reused: Boolean(known),
     },
   })
 }
 
 export function updateSessionStake(input: { actor: Actor; sessionId: string; stakeCents: number }) {
+  assertWritable()
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     {
@@ -1086,6 +1225,7 @@ export function addLossEntry(input: {
   playerId: string
   note: string | null
 }) {
+  assertWritable()
   const session = sqliteGet<{ status: string; stake_cents: number }>(
     'SELECT status, stake_cents FROM sessions WHERE id = $sessionId',
     {
@@ -1143,6 +1283,8 @@ export function addLossEntry(input: {
       note: input.note,
     },
   })
+
+  return entryId
 }
 
 export function addBeerRoundEntry(input: {
@@ -1152,6 +1294,7 @@ export function addBeerRoundEntry(input: {
   amountCents: number
   note: string | null
 }) {
+  assertWritable()
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     {
@@ -1210,9 +1353,18 @@ export function addBeerRoundEntry(input: {
       isBeerRound: true,
     },
   })
+
+  return entryId
 }
 
-export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerId: string }) {
+export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerId: string; entryId?: string }) {
+  assertWritable()
+  getSqlite().withTransactionSync(() => deleteLastLossUnsafe(input))
+}
+
+/** Same as deleteLastLoss, for callers that already hold a transaction. */
+export function deleteLastLossUnsafe(input: { actor: Actor; sessionId: string; playerId: string; entryId?: string }) {
+  assertWritable()
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     { $sessionId: input.sessionId }
@@ -1232,12 +1384,15 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
       SELECT id, amount_cents, note, is_beer_round
       FROM loss_entries
       WHERE session_id = $sessionId AND player_id = $playerId
-      ORDER BY created_at DESC
+        AND (($entryId IS NOT NULL AND id = $entryId)
+          OR ($entryId IS NULL AND is_beer_round = 0))
+      ORDER BY created_at DESC, rowid DESC
       LIMIT 1
     `,
     {
       $sessionId: input.sessionId,
       $playerId: input.playerId,
+      $entryId: input.entryId ?? null,
     }
   )
 
@@ -1247,46 +1402,90 @@ export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerI
 
   const lossType = lastLoss.is_beer_round ? 'Bierrunde' : 'Verlust'
 
-  sqliteRun('DELETE FROM loss_entries WHERE id = $id', { $id: lastLoss.id })
-
-  // Insert a negative correction so it shows in the history log
   const correctionId = createId('correction')
   const playerRow = sqliteGet<{ name: string }>('SELECT name FROM players WHERE id = $id', {
     $id: input.playerId,
   })
-  sqliteRun(
-    `
-      INSERT INTO corrections (id, player_id, session_id, amount_cents, reason, created_by_account_id, created_at)
-      VALUES ($id, $playerId, $sessionId, $amountCents, $reason, $createdByAccountId, $createdAt)
-    `,
-    {
-      $id: correctionId,
-      $playerId: input.playerId,
-      $sessionId: input.sessionId,
-      $amountCents: -lastLoss.amount_cents,
-      $reason: `Korrektur: ${lossType} von ${playerRow?.name ?? 'Spieler'} gelöscht (−${(lastLoss.amount_cents / 100).toFixed(2).replace('.', ',')} €)`,
-      $createdByAccountId: input.actor.accountId,
-      $createdAt: nowIso(),
-    }
-  )
+  {
+    sqliteRun('DELETE FROM loss_entries WHERE id = $id', { $id: lastLoss.id })
 
-  createAuditEvent({
-    actorAccountId: input.actor.accountId,
-    entityType: 'loss',
-    entityId: lastLoss.id,
-    sessionId: input.sessionId,
-    eventType: lastLoss.is_beer_round ? 'beerround.deleted' : 'loss.deleted',
-    payload: {
-      playerId: input.playerId,
-      amountCents: lastLoss.amount_cents,
-      note: lastLoss.note,
-      isBeerRound: Boolean(lastLoss.is_beer_round),
-      correctionId,
-    },
+    // This row documents the reversal. Removing the original loss already
+    // cancels its amount; another negative correction would double-subtract.
+    sqliteRun(
+      `
+        INSERT INTO corrections (id, player_id, session_id, amount_cents, reason, created_by_account_id, created_at)
+        VALUES ($id, $playerId, $sessionId, $amountCents, $reason, $createdByAccountId, $createdAt)
+      `,
+      {
+        $id: correctionId,
+        $playerId: input.playerId,
+        $sessionId: input.sessionId,
+        $amountCents: getVoidedLossCorrectionCents(),
+        $reason: `Storniert: ${lossType} von ${playerRow?.name ?? 'Spieler'} (${(lastLoss.amount_cents / 100).toFixed(2).replace('.', ',')} €)`,
+        $createdByAccountId: input.actor.accountId,
+        $createdAt: nowIso(),
+      }
+    )
+
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'loss',
+      entityId: lastLoss.id,
+      sessionId: input.sessionId,
+      eventType: lastLoss.is_beer_round ? 'beerround.deleted' : 'loss.deleted',
+      payload: {
+        playerId: input.playerId,
+        amountCents: lastLoss.amount_cents,
+        note: lastLoss.note,
+        isBeerRound: Boolean(lastLoss.is_beer_round),
+        correctionId,
+      },
+    })
+  }
+}
+
+/**
+ * "Abend abbrechen": discards an open evening as if it never happened –
+ * its losses, beer rounds and attendance go with it (FK cascade), no absence
+ * charges are assessed. Payments/corrections linked to it are kept and only
+ * lose the link.
+ */
+export function cancelSession(input: { actor: Actor; sessionId: string }) {
+  assertWritable()
+  getSqlite().withTransactionSync(() => {
+    const session = sqliteGet<{ status: string; title: string }>('SELECT status, title FROM sessions WHERE id = $id', {
+      $id: input.sessionId,
+    })
+    if (!session) throw new Error('Spielabend nicht gefunden.')
+    if (session.status !== 'open') throw new Error('Nur offene Spielabende können abgebrochen werden.')
+
+    const totals = sqliteGet<{ n: number; cents: number | null }>(
+      'SELECT COUNT(*) AS n, SUM(amount_cents) AS cents FROM loss_entries WHERE session_id = $id',
+      { $id: input.sessionId }
+    )
+    sqliteRun('DELETE FROM sessions WHERE id = $id', { $id: input.sessionId })
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'session',
+      entityId: input.sessionId,
+      eventType: 'session.cancelled',
+      payload: { title: session.title, discardedEntries: totals?.n ?? 0, discardedCents: totals?.cents ?? 0 },
+    })
   })
 }
 
 export function closeSession(input: { actor: Actor; sessionId: string }) {
+  assertWritable()
+  // Reads and writes share one transaction so a second close can never see a
+  // stale 'open' status and assess absence charges twice.
+  let result!: ReturnType<typeof closeSessionUnsafe>
+  getSqlite().withTransactionSync(() => {
+    result = closeSessionUnsafe(input)
+  })
+  return result
+}
+
+function closeSessionUnsafe(input: { actor: Actor; sessionId: string }) {
   const settings = getAppSettings()
   const session = sqliteGet<{ status: 'open' | 'closed' }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
@@ -1329,7 +1528,7 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
       SELECT sa.player_id, sa.present, p.is_core
       FROM session_attendance sa
       INNER JOIN players p ON p.id = sa.player_id
-      WHERE sa.session_id = $sessionId
+      WHERE sa.session_id = $sessionId AND p.is_archived = 0
     `,
     { $sessionId: input.sessionId }
   )
@@ -1372,14 +1571,12 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
   }
 
   if (!absenceReason && absentCoreIds.length > 0 && totalPresentCoreLossCents > 0) {
-    const averageCents = calculateAbsenceAverageCents(
+    const amountCents = calculateAbsenceChargeCents({
+      mode: settings.absencePenaltyMode,
       totalPresentCoreLossCents,
-      presentCoreIds.length
-    )
-    const amountCents =
-      settings.absencePenaltyMode === 'split_absent'
-        ? Math.round(averageCents / absentCoreIds.length)
-        : averageCents
+      presentCoreCount: presentCoreIds.length,
+      absentCoreCount: absentCoreIds.length,
+    })
     const createdAt = nowIso()
     absenceChargeCount = absentCoreIds.length
     const note = getAbsenceChargeNote({
@@ -1437,7 +1634,7 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
       SET status = 'closed',
           closed_at = $closedAt,
           updated_at = $updatedAt
-      WHERE id = $sessionId
+      WHERE id = $sessionId AND status = 'open'
     `,
     {
       $sessionId: input.sessionId,
@@ -1470,6 +1667,43 @@ export function closeSession(input: { actor: Actor; sessionId: string }) {
   }
 }
 
+/** Takes money out of the cashbox (e.g. "Kasten Bier"); player balances stay as they are. */
+export function recordWithdrawal(input: { actor: Actor; amountCents: number; note: string; sessionId?: string | null }) {
+  assertWritable()
+  const note = input.note.trim()
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new Error('Bitte einen Betrag größer 0 eingeben.')
+  if (!note) throw new Error('Bitte angeben, wofür das Geld entnommen wird.')
+  const cash = getCashboxSummary().cashOnHandCents
+  if (input.amountCents > cash) {
+    throw new Error(`In der Kasse sind nur ${(cash / 100).toFixed(2).replace('.', ',')} € – mehr kann nicht entnommen werden.`)
+  }
+
+  const withdrawalId = createId('withdrawal')
+  // No own transaction: remote commands already run inside one (no nesting).
+  sqliteRun(
+      `
+        INSERT INTO cashbox_withdrawals (id, amount_cents, note, session_id, created_by_account_id, created_at)
+        VALUES ($id, $amountCents, $note, $sessionId, $actor, $createdAt)
+      `,
+      {
+        $id: withdrawalId,
+        $amountCents: input.amountCents,
+        $note: note,
+        $sessionId: input.sessionId ?? null,
+        $actor: input.actor.accountId,
+        $createdAt: nowIso(),
+      }
+    )
+    createAuditEvent({
+      actorAccountId: input.actor.accountId,
+      entityType: 'withdrawal',
+      entityId: withdrawalId,
+      eventType: 'cashbox.withdrawal',
+      payload: { amountCents: input.amountCents, note },
+    })
+  return withdrawalId
+}
+
 export function recordPayment(input: {
   actor: Actor
   playerId: string
@@ -1477,6 +1711,7 @@ export function recordPayment(input: {
   note: string | null
   sessionId?: string | null
 }) {
+  assertWritable()
   const paymentId = createId('payment')
 
   sqliteRun(
@@ -1516,6 +1751,7 @@ export function recordCorrection(input: {
   reason: string
   sessionId?: string | null
 }) {
+  assertWritable()
   const correctionId = createId('correction')
 
   sqliteRun(

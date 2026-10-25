@@ -1,0 +1,46 @@
+# Example for Unraid (Compose Manager). Build the image first from the repo root:
+#   docker build -f server/Dockerfile -t schockboard-server:latest .
+# Public routing + Cloudflare Access are handled by DockFlare via the labels below:
+#   - everything on sh0ckb04rd.snytex.de requires Access login (authenticated-default)
+#   - /api/device bypasses Access (the app authenticates with its device token)
+services:
+  schockboard:
+    image: schockboard-server:latest
+    container_name: schockboard
+    restart: unless-stopped
+    networks:
+      - cloudflare-net
+    volumes:
+      - /mnt/user/appdata/schockboard/data:/data
+    environment:
+      TZ: Europe/Berlin
+      PUBLIC_ORIGIN: https://sh0ckb04rd.snytex.de
+      ADMIN_EMAILS: snytex@snytex.de
+      # Managers: data/override commands, no device management (comma-separated; also allow them in Access).
+      MANAGER_EMAILS: ""
+      # Finished commands older than this many days are deleted (startup + daily).
+      COMMAND_RETENTION_DAYS: "30"
+      CF_ACCESS_TEAM_DOMAIN: snytex.cloudflareaccess.com
+      # AUD tag of the Access application DockFlare created for the admin UI.
+      CF_ACCESS_AUD: d44b417d5e1f8fab69e7d0499a9b3e645d48f413e8d44f70271e70d955644639
+    labels:
+      dockflare.enable: "true"
+      dockflare.0.hostname: sh0ckb04rd.snytex.de
+      dockflare.0.service: http://schockboard:8787
+      # Own Access policy instead of the shared 'authenticated-default' group
+      # (that group currently references a deleted One-time-PIN IdP). Login via
+      # Pocket-ID; only the listed admin email(s) get through.
+      dockflare.0.access.policy: custom
+      dockflare.0.access.allowed_idps: 9b61da03-5700-43f0-a321-2850c330b4c6
+      dockflare.0.access.auto_redirect_to_identity: "true"
+      dockflare.0.access.session_duration: 720h
+      dockflare.0.access.custom_rules: '[{"name":"Schockboard Admins","decision":"allow","include":[{"email":{"email":"snytex@snytex.de"}}]}]'
+      dockflare.1.hostname: sh0ckb04rd.snytex.de
+      dockflare.1.path: /api/device
+      dockflare.1.service: http://schockboard:8787
+      dockflare.1.access.group: public-default-bypass
+    # No host port: traffic only arrives through the Cloudflare tunnel.
+
+networks:
+  cloudflare-net:
+    external: true

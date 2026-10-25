@@ -28,6 +28,9 @@ export type AppSettingsRecord = {
   viewMode: ViewMode
   themeId: ThemeId
   absencePenaltyMode: AbsencePenaltyMode
+  hapticsEnabled: boolean
+  achievementAnimations: boolean
+  autoBackup: boolean
 }
 
 export type AuthAccount = {
@@ -118,7 +121,14 @@ export type PlayerDebtSummary = {
 
 export type CashboxSummary = {
   totalPaymentsCents: number
+  /** Sum of positive balances (what players still owe). */
   totalOutstandingCents: number
+  /** Sum of credits (players who paid more than they owe). */
+  totalCreditCents: number
+  /** Money taken out of the cashbox (purchases). */
+  totalWithdrawalsCents: number
+  /** What should physically be in the box: payments − withdrawals. */
+  cashOnHandCents: number
 }
 
 export type SessionOverview = {
@@ -146,7 +156,7 @@ export type SessionAttendanceRow = {
 
 export type HistoryEntry = {
   id: string
-  kind: 'loss' | 'beerround' | 'absence' | 'payment' | 'correction' | 'audit'
+  kind: 'loss' | 'beerround' | 'absence' | 'payment' | 'correction' | 'withdrawal' | 'audit'
   createdAt: string
   playerId: string | null
   playerName: string | null

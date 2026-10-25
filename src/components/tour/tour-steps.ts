@@ -1,0 +1,96 @@
+import type { TourStep } from '@/components/tour/tour-logic'
+
+/** Target ids – registered with useTourTarget()/<TourTarget>. */
+export const TOUR_TARGETS = {
+  dashboardStart: 'dashboard.start',
+  sessionsCreate: 'sessions.create',
+  attendance: 'evening.attendance',
+  stake: 'evening.stake',
+  go: 'evening.start',
+  tile: 'evening.tile',
+  beer: 'evening.beer',
+  undoToast: 'undo.toast',
+  finish: 'evening.finish',
+  cashboxTab: 'tab.cashbox',
+} as const
+
+/** The first-evening tour. Nothing here ever books automatically. */
+export const FIRST_EVENING_TOUR: TourStep[] = [
+  {
+    id: 'start',
+    title: 'Dein erster Abend',
+    body: 'Tippe hier, um einen Spielabend zu starten – alle Stammspieler sind automatisch dabei.',
+    screens: ['dashboard', 'sessions'],
+    targets: [TOUR_TARGETS.dashboardStart, TOUR_TARGETS.sessionsCreate],
+    targetPress: 'perform',
+    advanceAfterPerform: false,
+    requiresTargetTap: true,
+    completeOnScreens: ['evening'],
+  },
+  {
+    id: 'attendance',
+    title: 'Wer ist da?',
+    body: 'Tippe auf einen Namen, um ihn als abwesend zu markieren. Gäste kommen über „Gast hinzufügen“ dazu.',
+    screens: ['evening'],
+    targets: [TOUR_TARGETS.attendance],
+    targetPress: 'passthrough',
+  },
+  {
+    id: 'stake',
+    title: 'Einsatz pro Verlust',
+    body: 'Mit − und + stellst du ein, was ein Verlust heute kostet.',
+    screens: ['evening'],
+    targets: [TOUR_TARGETS.stake],
+    targetPress: 'passthrough',
+  },
+  {
+    id: 'go',
+    title: 'Ab aufs Live-Brett',
+    body: '„Los geht’s“ übernimmt die Aufstellung und öffnet das Live-Brett.',
+    screens: ['evening'],
+    targets: [TOUR_TARGETS.go],
+    targetPress: 'perform',
+    nextPerformsAction: true,
+  },
+  {
+    id: 'tile',
+    title: 'Verlust buchen',
+    body: '„+“ bucht einen Verlust zum Einsatz. „−“ storniert den letzten – auf dem Handy auch per Wischen nach links.',
+    screens: ['evening'],
+    targets: [TOUR_TARGETS.tile],
+    targetPress: 'advance',
+  },
+  {
+    id: 'beer',
+    title: 'Bierrunde',
+    body: 'Gibt jemand eine Runde aus? Hier buchst du sie – getrennt von den Verlusten.',
+    screens: ['evening'],
+    targets: [TOUR_TARGETS.beer],
+    targetPress: 'advance',
+  },
+  {
+    id: 'undo',
+    title: 'Vertippt? Kein Problem',
+    body: 'Nach jeder Buchung erscheint kurz „Rückgängig“ – ein Tipp, und sie ist wieder weg.',
+    screens: ['evening'],
+    targets: [TOUR_TARGETS.undoToast],
+    targetPress: 'block',
+    textOnlyFallback: true,
+  },
+  {
+    id: 'finish',
+    title: 'Abschluss',
+    body: 'Hier siehst du vorab, wer was zahlt – auch für Abwesende. Gebucht wird erst mit „Abend abschließen“.',
+    screens: ['evening'],
+    targets: [TOUR_TARGETS.finish],
+    targetPress: 'perform',
+    nextPerformsAction: true,
+  },
+  {
+    id: 'cashbox',
+    title: 'Kasse',
+    body: 'Hier buchst du Zahlungen und siehst, wer was schuldet. Viel Spaß beim Schocken!',
+    targets: [TOUR_TARGETS.cashboxTab],
+    targetPress: 'perform',
+  },
+]

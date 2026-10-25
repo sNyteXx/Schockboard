@@ -1,6 +1,6 @@
 import { SCHOCK_RULE_PROFILE } from '@/domain/rules'
 import { nowIso } from '@/domain/utils'
-import { getSqlite, sqliteGet, sqliteRun } from '@/db/client'
+import { getSqlite, openScratchDatabase, sqliteGet, sqliteRun } from '@/db/client'
 
 const MIGRATIONS = [
   {
@@ -221,7 +221,96 @@ const MIGRATIONS = [
       ALTER TABLE loss_entries ADD COLUMN is_beer_round INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 6,
+    name: 'normalize_voided_loss_corrections',
+    sql: `
+      -- Older versions deleted the original loss AND inserted a negative
+      -- correction, inadvertently subtracting the amount twice. Only fix
+      -- corrections identified by their matching deletion audit event;
+      -- genuine manual corrections must be preserved unchanged.
+      CREATE TEMP TABLE v6_voided AS
+      SELECT c.id, c.player_id, c.session_id, c.amount_cents
+      FROM corrections c
+      WHERE c.amount_cents < 0
+        AND c.id IN (
+          SELECT CASE WHEN json_valid(payload_json)
+            THEN json_extract(payload_json, '$.correctionId')
+            ELSE NULL END
+          FROM audit_events
+          WHERE event_type IN ('loss.deleted', 'beerround.deleted')
+        );
+
+      -- Leave a visible audit trail per neutralized row, so a group that had
+      -- already compensated the double deduction manually can spot and
+      -- reverse it in the log.
+      INSERT INTO audit_events (id, actor_account_id, event_type, entity_type, entity_id, session_id, payload_json, created_at)
+      SELECT 'audit_v6_' || id, NULL, 'migration.correction_neutralized', 'correction', id, session_id,
+        json_object('playerId', player_id, 'previousAmountCents', amount_cents, 'migration', 6),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      FROM v6_voided;
+
+      UPDATE corrections SET amount_cents = 0 WHERE id IN (SELECT id FROM v6_voided);
+
+      DROP TABLE v6_voided;
+    `,
+  },
+  {
+    version: 7,
+    name: 'remote_inbox',
+    sql: `
+      -- Commands queued in the web admin and applied on this device. The
+      -- primary key makes applying a command idempotent; 'reported' tracks
+      -- whether the server has acknowledged the result yet.
+      CREATE TABLE IF NOT EXISTS remote_inbox (
+        command_id TEXT PRIMARY KEY NOT NULL,
+        type TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('applied', 'rejected')),
+        error TEXT,
+        applied_at TEXT NOT NULL,
+        reported INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
+  {
+    version: 8,
+    name: 'bvb09_default_theme',
+    sql: `
+      -- BVB 09 is the house look. Databases from older builds got 'original'
+      -- as a column default without anyone choosing it; switch them once.
+      -- A later choice in Setup is kept (this runs only once).
+      UPDATE app_settings SET theme_id = 'bvb09' WHERE theme_id = 'original';
+    `,
+  },
+  {
+    version: 9,
+    name: 'cashbox_withdrawals',
+    sql: `
+      -- Money taken out of the cashbox (e.g. drinks bought). Lowers the cash
+      -- on hand, never touches player balances.
+      CREATE TABLE IF NOT EXISTS cashbox_withdrawals (
+        id TEXT PRIMARY KEY,
+        amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
+        note TEXT NOT NULL,
+        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        created_by_account_id TEXT NOT NULL REFERENCES auth_accounts(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 10,
+    name: 'feedback_and_backup_preferences',
+    sql: `
+      ALTER TABLE app_settings ADD COLUMN haptics_enabled INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE app_settings ADD COLUMN achievement_animations INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE app_settings ADD COLUMN auto_backup INTEGER NOT NULL DEFAULT 1;
+    `,
+  },
 ]
+
+export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version
 
 let bootstrapped = false
 
@@ -247,19 +336,107 @@ function applyMigrations() {
       continue
     }
 
-    getSqlite().execSync(migration.sql)
-    sqliteRun(
-      `
-        INSERT OR REPLACE INTO schema_migrations (version, name, applied_at)
-        VALUES ($version, $name, $appliedAt)
-      `,
-      {
-        $version: migration.version,
-        $name: migration.name,
-        $appliedAt: nowIso(),
+    getSqlite().withTransactionSync(() => {
+      try {
+        getSqlite().execSync(migration.sql)
+      } catch (error) {
+        // Early builds already created some of these columns under other
+        // migration numbers; repairSchema() covers anything still missing.
+        if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error
       }
-    )
+      sqliteRun(
+        `
+          INSERT OR REPLACE INTO schema_migrations (version, name, applied_at)
+          VALUES ($version, $name, $appliedAt)
+        `,
+        {
+          $version: migration.version,
+          $name: migration.name,
+          $appliedAt: nowIso(),
+        }
+      )
+    })
   }
+}
+
+type ColumnInfo = { name: string; type: string; notnull: number; dflt_value: string | null; pk: number }
+type SchemaObject = { type: 'table' | 'view' | 'index'; name: string; sql: string | null }
+
+/**
+ * Brings the live database up to the reference schema, whatever its
+ * migration history claims. Early builds (e.g. 1.0.0 from March 2026)
+ * numbered migrations differently, so their schema_migrations says
+ * "done" while columns such as app_settings.view_mode are missing.
+ *
+ * The reference is built by running every migration on an empty in-memory
+ * database; missing tables, columns and indexes are added, views recreated.
+ * Existing rows are never touched. Returns the list of repairs.
+ */
+export function repairSchema(): string[] {
+  const reference = openScratchDatabase()
+  const repairs: string[] = []
+
+  try {
+    for (const migration of MIGRATIONS) reference.execSync(migration.sql)
+
+    const db = getSqlite()
+    const wanted = reference.getAllSync<SchemaObject>(
+      "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view', 'index') AND name NOT LIKE 'sqlite_%'"
+    )
+    const present = new Set(
+      db.getAllSync<{ name: string }>("SELECT name FROM sqlite_master WHERE type IN ('table', 'view', 'index')").map((row) => row.name)
+    )
+
+    db.withTransactionSync(() => {
+      for (const table of wanted.filter((object) => object.type === 'table' && object.sql)) {
+        if (!present.has(table.name)) {
+          db.execSync(table.sql!)
+          repairs.push(`table ${table.name}`)
+          continue
+        }
+        const have = new Set(db.getAllSync<ColumnInfo>(`PRAGMA table_info("${table.name}")`).map((column) => column.name))
+        for (const column of reference.getAllSync<ColumnInfo>(`PRAGMA table_info("${table.name}")`)) {
+          if (have.has(column.name) || column.pk > 0) continue
+          // SQLite needs a default to add a NOT NULL column to existing rows.
+          const fallback = /INT|REAL|NUM/i.test(column.type) ? '0' : "''"
+          const defaultValue = column.dflt_value ?? (column.notnull ? fallback : null)
+          db.execSync(
+            `ALTER TABLE "${table.name}" ADD COLUMN "${column.name}" ${column.type}` +
+              (column.notnull && defaultValue !== null ? ' NOT NULL' : '') +
+              (defaultValue !== null ? ` DEFAULT ${defaultValue}` : '')
+          )
+          repairs.push(`column ${table.name}.${column.name}`)
+        }
+      }
+
+      for (const index of wanted.filter((object) => object.type === 'index' && object.sql)) {
+        if (present.has(index.name)) continue
+        db.execSync(index.sql!.replace(/^CREATE (UNIQUE )?INDEX /i, (match) => `${match}IF NOT EXISTS `))
+        repairs.push(`index ${index.name}`)
+      }
+
+      // Views select specific columns: rebuild them after any repair.
+      for (const view of wanted.filter((object) => object.type === 'view' && object.sql)) {
+        if (repairs.length === 0 && present.has(view.name)) continue
+        db.execSync(`DROP VIEW IF EXISTS "${view.name}"`)
+        db.execSync(view.sql!)
+        if (!present.has(view.name)) repairs.push(`view ${view.name}`)
+      }
+
+      if (repairs.length > 0) {
+        sqliteRun(
+          `INSERT INTO audit_events (id, actor_account_id, event_type, entity_type, entity_id, session_id, payload_json, created_at)
+           VALUES ($id, NULL, 'schema.repaired', 'database', 'schema', NULL, $payload, $createdAt)`,
+          { $id: `audit_repair_${Date.now()}`, $payload: JSON.stringify({ repairs }), $createdAt: nowIso() }
+        )
+      }
+    })
+  } finally {
+    reference.closeSync()
+  }
+
+  if (repairs.length > 0) console.warn('[Schockboard] Schema repariert:', repairs.join(', '))
+  return repairs
 }
 
 function ensureSettings() {
@@ -285,7 +462,7 @@ function ensureSettings() {
         created_at,
         updated_at
       )
-      VALUES ('app', $defaultStakeCents, 'EUR', $cashboxLabel, $ruleProfileJson, 'basic', 'original', 'full_average', $createdAt, $updatedAt)
+      VALUES ('app', $defaultStakeCents, 'EUR', $cashboxLabel, $ruleProfileJson, 'basic', 'bvb09', 'full_average', $createdAt, $updatedAt)
     `,
     {
       $defaultStakeCents: 100,
@@ -303,6 +480,7 @@ export function ensureDatabaseReady() {
   }
 
   applyMigrations()
+  repairSchema()
   ensureSettings()
   bootstrapped = true
 }

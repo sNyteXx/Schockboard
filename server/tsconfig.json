@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/db/client": ["./src/snapshot-client.ts"],
+      "@/*": ["../src/*"],
+      "expo-crypto": ["./src/shims/expo-crypto.ts"],
+      "zod": ["./node_modules/zod"]
+    }
+  },
+  "include": ["src", "test", "scripts", "vitest.config.ts", "build.mjs"],
+  "exclude": ["node_modules", "dist", "web"]
+}

@@ -1,9 +1,11 @@
+import { BackupService } from '@/services/backup-service'
 import type { Actor, HistoryFilters, ThemeId, ViewMode } from '@/domain/types'
 import {
   addBeerRoundEntry,
   addGuestToSession,
   addLossEntry,
   closeSession,
+  cancelSession,
   createPlayer,
   createSession,
   deleteLastLoss,
@@ -38,7 +40,15 @@ export const SessionService = {
   addLossEntry,
   deleteLastLoss,
   addBeerRoundEntry,
-  closeSession,
+  closeSession(input: Parameters<typeof closeSession>[0]) {
+    const result = closeSession(input)
+    let backupError: string | null = null
+    if (getAppSettings().autoBackup) {
+      try { BackupService.saveLocal('evening') } catch (error) { backupError = error instanceof Error ? error.message : 'Automatische Sicherung fehlgeschlagen.' }
+    }
+    return { ...result, backupError }
+  },
+  cancelSession,
   createCorePlayer(input: { actor: Actor; name: string }) {
     return createPlayer({
       actor: input.actor,
