@@ -132,6 +132,9 @@ export function openStore(file: string, now: () => string = () => new Date().toI
       db.exec('BEGIN')
       try {
         db.prepare('UPDATE devices SET revoked_at = ? WHERE revoked_at IS NULL').run(at)
+        // Queued commands target the previous device's data (its entry ids);
+        // never let a replacement device apply them.
+        db.prepare("UPDATE commands SET status = 'cancelled', cancelled_at = ?, error = 'Gerät gewechselt' WHERE status = 'pending'").run(at)
         db.prepare('INSERT INTO devices (id, token_hash, paired_at, paired_by) VALUES (?, ?, ?, ?)').run(
           id,
           hashToken(token),

@@ -92,6 +92,7 @@ export type ServerStatus = {
   deviceLabel: string | null
   /** ISO time, 'first-device' while nothing was ever enrolled, or null. */
   enrollmentOpenUntil: string | null
+  snapshotFromPreviousDevice?: boolean
   lastSeenAt: string | null
   lastSnapshotAt: string | null
   snapshotCreatedAt: string | null

@@ -142,6 +142,12 @@ export function SyncStatus() {
           {status.snapshotCreatedAt ? <span className="muted"> (erstellt {formatDateTime(status.snapshotCreatedAt)})</span> : null}
         </span>
       </div>
+      {status.snapshotFromPreviousDevice ? (
+        <div className="banner warn small">
+          Angezeigt wird noch der Stand des vorherigen Geräts. Das neue Gerät lädt seinen Stand hoch, sobald es Daten hat – offene
+          Aufträge für das alte Gerät wurden beim Wechsel verworfen.
+        </div>
+      ) : null}
     </div>
   )
 }

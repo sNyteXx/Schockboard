@@ -44,3 +44,24 @@ describe('automatic device enrollment', () => {
     expect((await enroll(server, 'Noch eins')).status).toBe(403)
   })
 })
+
+describe('device switch', () => {
+  it('cancels commands queued for the previous device', async () => {
+    const target = await createTestServer()
+    try {
+      const enrollOnce = (name: string) =>
+        target.app.request('/api/device/enroll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceName: name }) })
+      await enrollOnce('Altes Tablet')
+      target.store.db
+        .prepare("INSERT INTO commands (id, type, payload_json, status, created_at, created_by) VALUES ('c1', 'audit.purge', '{}', 'pending', 'x', 'admin')")
+        .run()
+      await target.admin('/api/admin/device/enrollment', { method: 'POST' })
+      await enrollOnce('Neues Tablet')
+
+      const row = target.store.db.prepare("SELECT status, error FROM commands WHERE id = 'c1'").get() as { status: string; error: string }
+      expect(row).toEqual({ status: 'cancelled', error: 'Gerät gewechselt' })
+    } finally {
+      target.cleanup()
+    }
+  })
+})

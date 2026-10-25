@@ -239,6 +239,8 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
       snapshotCreatedAt: snapshot?.createdAt ?? null,
       schemaVersion: snapshot?.schemaVersion ?? null,
       snapshotSizeBytes: snapshot?.sizeBytes ?? null,
+      // True until the current device has uploaded its own first snapshot.
+      snapshotFromPreviousDevice: Boolean(device && snapshot?.deviceId && snapshot.deviceId !== device.id),
       pendingCommands: store.countPendingCommands(),
       publicOrigin: config.publicOrigin,
     })
