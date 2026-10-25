@@ -1,4 +1,4 @@
-import { useMemo, useState, type KeyboardEvent, type PointerEvent } from 'react'
+import { useId, useMemo, useState, type KeyboardEvent, type PointerEvent } from 'react'
 
 import { formatCurrency, formatDate } from '@/domain/format'
 
@@ -35,6 +35,7 @@ export function LineChart(props: {
   const [ref, width] = useWidth<HTMLDivElement>()
   const [hidden, setHidden] = useState<Set<string>>(() => new Set(props.initiallyHidden ?? []))
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+  const gradientId = `area-${useId().replace(/:/g, '')}`
 
   const visible = series.filter((entry) => !hidden.has(entry.id) && entry.points.length > 0)
   const times = useMemo(
@@ -135,6 +136,17 @@ export function LineChart(props: {
     <div className="chart">
       {series.length >= 2 ? (
         <div className="legend" role="group" aria-label="Reihen ein-/ausblenden">
+          {series.length > 4 ? (
+            <span className="legend-bulk">
+              <button type="button" className="link-btn" onClick={() => setHidden(new Set())}>
+                alle
+              </button>
+              <span aria-hidden>·</span>
+              <button type="button" className="link-btn" onClick={() => setHidden(new Set(series.map((entry) => entry.id)))}>
+                keine
+              </button>
+            </span>
+          ) : null}
           {series.map((entry) => (
             <button
               key={entry.id}
@@ -186,6 +198,21 @@ export function LineChart(props: {
                   {label}
                 </text>
               ))}
+            {visible.length === 1 ? (
+              <>
+                <defs>
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stopColor={visible[0].color} stopOpacity={0.22} />
+                    <stop offset="1" stopColor={visible[0].color} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <path
+                  className="series-area"
+                  d={`${path(visible[0])} V${(pad.top + plotHeight).toFixed(1)} H${x(startAtZero || visible[0].points[0].t <= tMin ? tMin : visible[0].points[0].t).toFixed(1)} Z`}
+                  fill={`url(#${gradientId})`}
+                />
+              </>
+            ) : null}
             {visible.map((entry) => (
               <path
                 key={entry.id}
@@ -197,7 +224,7 @@ export function LineChart(props: {
               />
             ))}
             {endLabels.map(({ entry, y: labelY }) => (
-              <text key={entry.id} className="end-label" x={pad.left + plotWidth + 8} y={labelY} dy="0.32em">
+              <text key={entry.id} className="end-label" x={pad.left + plotWidth + 8} y={labelY} dy="0.32em" fill={entry.color}>
                 {entry.label.length > 11 ? `${entry.label.slice(0, 10)}…` : entry.label}
               </text>
             ))}
@@ -205,7 +232,7 @@ export function LineChart(props: {
               <g pointerEvents="none">
                 <line className="crosshair" x1={x(hoverTime)} x2={x(hoverTime)} y1={pad.top} y2={pad.top + plotHeight} />
                 {hoverRows.map((row) => (
-                  <circle key={row.entry.id} cx={x(hoverTime)} cy={y(row.value ?? 0)} r={4.5} fill={row.entry.color} stroke="var(--bg-elevated)" strokeWidth={2} />
+                  <circle key={row.entry.id} cx={x(hoverTime)} cy={y(row.value ?? 0)} r={4.5} fill={row.entry.color} style={{ stroke: "var(--bg-elevated)" }} strokeWidth={2.5} />
                 ))}
               </g>
             ) : null}

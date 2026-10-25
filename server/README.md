@@ -80,10 +80,29 @@ Aus dem letzten Stand per SQL berechnet (Saison-Werte zählen nur beendete Abend
 
 - `GET /api/admin/charts/evenings?season=YYYY|all` – je beendetem Abend: Datum, Titel, Verluste, Bierrunden, Abwesenheit, Summe, pro Spieler.
 - `GET /api/admin/charts/players` – je Spieler: Schulden-Verlauf (Abende, Zahlungen, Korrekturen; ein laufender Abend als letzter Punkt mit `open: true`), Summen, Abende dabei/verpasst.
-- `GET /api/admin/charts/cashbox` – Zahlungen kumuliert und aktuell offene Schulden.
+- `GET /api/admin/charts/cashbox` – Zahlungen kumuliert (`payments`), Entnahmen (`withdrawals`), beides zusammen mit laufendem
+  Kassenstand (`events[].cashOnHandCents` = Zahlungen − Entnahmen), Summen `totalPaymentsCents`/`totalWithdrawalsCents`/
+  `cashOnHandCents` und aktuell offene Schulden.
 
-Historie, Abend-Verlauf und „Zuletzt passiert“ liefern zu jeder Buchung `entryKind` (`loss|payment|correction|absence`) und die
-Roh-Notiz `note` für die Übermacht-Aufträge.
+Historie, Abend-Verlauf und „Zuletzt passiert“ liefern zu jeder Buchung `entryKind` (`loss|payment|correction|absence|withdrawal`)
+und die Roh-Notiz `note` für die Übermacht-Aufträge; `GET /api/admin/history?kind=withdrawal` listet nur Entnahmen.
+
+## Entnahmen
+
+`cashbox.withdraw` `{ amountCents > 0, note }` nimmt Geld aus der Kasse (z. B. „Kasten Bier“); Spielerkonten bleiben unverändert.
+Der Server prüft gegen den letzten Stand des gewählten Geräts: Notiz Pflicht, Betrag ≤ Kassenstand minus bereits beauftragter
+Entnahmen. `entry.update`/`entry.delete` mit `kind: 'withdrawal'` verlangen eine existierende Entnahme; eine Erhöhung darf den
+verfügbaren Kassenstand nicht übersteigen, Betrag > 0 und Notiz bleiben Pflicht. Das Gerät prüft beim Übernehmen erneut.
+
+## Web-Oberfläche („Kommandozentrale“)
+
+Design-Tokens (Farben, Radien, Abstände) erzeugt `web/src/theme.ts` zur Laufzeit aus `src/theme/tokens.ts` (Palette `bvb09`),
+Spielerfarben kommen aus derselben `playerColor()`-Funktion wie in der App. Schriften (Inter, Barlow Condensed) sind über
+`@fontsource` gebündelt, Icons sind Inline-SVGs (`web/src/icons.tsx`) – kein CDN.
+
+Tastatur: **Strg/⌘ + K** oder **/** öffnet die Befehlspalette (Spieler, Abende, Buchungen suchen; „Zahlung buchen“,
+„Entnahme buchen“, „Korrektur buchen“, „Spieler anlegen“, „Gerät wechseln“), ↑/↓ + Enter wählen, Esc schließt. In Listen
+öffnet der Stift die Inline-Bearbeitung (Enter speichert, Esc bricht ab). Bewegung ≤ 240 ms, aus bei `prefers-reduced-motion`.
 
 ## Umgebungsvariablen
 

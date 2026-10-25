@@ -8,10 +8,12 @@ import {
   getDashboardSnapshot,
   getDebtSummaries,
   getHistoryEntries,
+  getOpenSessionOverview,
   getSessionDetail,
   listPlayers,
   listSessionOverviews,
 } from '@/db/queries'
+import { formatCurrency } from '@/domain/format'
 import type { HistoryEntry } from '@/domain/types'
 import { COMMAND_TYPES, parseCommandPayload, type CommandType } from '@/remote/protocol'
 
@@ -22,7 +24,7 @@ import { sqliteGet } from '../snapshot-client'
 import { DeviceLimitError, type DeviceRow, type Store } from '../store'
 import { ENTRY_TABLES, entryKindOf, entryNotes, getCashboxChart, getEveningsChart, getPlayersChart, type EntryKind } from '../charts'
 
-const HISTORY_KINDS = ['all', 'loss', 'beerround', 'absence', 'payment', 'correction', 'audit'] as const
+const HISTORY_KINDS = ['all', 'loss', 'beerround', 'absence', 'payment', 'correction', 'withdrawal', 'audit'] as const
 
 const commandRequestSchema = z.object({
   type: z.enum(COMMAND_TYPES as [CommandType, ...CommandType[]]),
@@ -49,6 +51,23 @@ function playerExists(playerId: string) {
 
 function sessionRow(sessionId: string) {
   return sqliteGet<{ id: string; status: string }>('SELECT id, status FROM sessions WHERE id = $id', { $id: sessionId })
+}
+
+/**
+ * Cash the web may still take out: the snapshot's cash on hand minus
+ * withdrawals that are already queued (but not applied) for this device.
+ */
+function availableCash(pending: ReturnType<Store['listPendingCommands']>) {
+  const queued = pending
+    .filter((command) => command.type === 'cashbox.withdraw')
+    .reduce((sum, command) => sum + Number(command.payload.amountCents ?? 0), 0)
+  return getCashboxSummary().cashOnHandCents - queued
+}
+
+function cashLimitMessage(available: number) {
+  return available > 0
+    ? `In der Kasse sind laut letztem Datenstand nur ${formatCurrency(available)} (abzüglich beauftragter Entnahmen) – mehr kann nicht entnommen werden.`
+    : 'Die Kasse ist laut letztem Datenstand leer (abzüglich beauftragter Entnahmen) – keine Entnahme möglich.'
 }
 
 /** Plausibility checks against the latest snapshot. The device re-validates when applying. */
@@ -120,10 +139,22 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
       }
       if (typeof payload.amountCents === 'number') {
         if (kind === 'correction' && payload.amountCents === 0) throw new CommandCheckError('Korrektur darf nicht 0 sein.')
+        if (kind === 'withdrawal' && payload.amountCents <= 0) throw new CommandCheckError('Entnahme muss größer 0 sein.')
         if (kind !== 'correction' && payload.amountCents < 0) throw new CommandCheckError('Betrag darf nicht negativ sein.')
+        if (kind === 'withdrawal') {
+          const current = sqliteGet<{ amount_cents: number }>('SELECT amount_cents FROM cashbox_withdrawals WHERE id = $id', {
+            $id: String(payload.entryId),
+          })
+          const increase = payload.amountCents - (current?.amount_cents ?? 0)
+          const available = availableCash(pending())
+          if (increase > 0 && increase > available) throw new CommandCheckError(cashLimitMessage(available))
+        }
       }
       if (kind === 'correction' && payload.note !== undefined && !payload.note) {
         throw new CommandCheckError('Korrekturen brauchen einen Grund.')
+      }
+      if (kind === 'withdrawal' && payload.note !== undefined && !payload.note) {
+        throw new CommandCheckError('Entnahmen brauchen einen Verwendungszweck.')
       }
       if (pendingDeleteOf(kind, String(payload.entryId), pending())) {
         throw new CommandCheckError('Diese Buchung wird bereits gelöscht.')
@@ -168,6 +199,16 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
         ? sqliteGet<{ n: number }>('SELECT COUNT(*) AS n FROM audit_events WHERE created_at < $before', { $before: payload.before })
         : sqliteGet<{ n: number }>('SELECT COUNT(*) AS n FROM audit_events')
       if (!count?.n) throw new CommandCheckError('Keine passenden Protokolleinträge im letzten Datenstand.')
+      return
+    }
+    case 'cashbox.withdraw': {
+      const amount = Number(payload.amountCents)
+      if (!Number.isInteger(amount) || amount <= 0) throw new CommandCheckError('Entnahme muss größer 0 sein.')
+      if (typeof payload.note !== 'string' || !payload.note.trim()) {
+        throw new CommandCheckError('Bitte angeben, wofür das Geld entnommen wird.')
+      }
+      const available = availableCash(pending())
+      if (amount > available) throw new CommandCheckError(cashLimitMessage(available))
       return
     }
     case 'session.delete': {
@@ -286,16 +327,17 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store; snapshot
 
   app.get('/devices', (c) => c.json(store.listDevices()))
 
-  /** Kasse/offen of every active device with a snapshot (overview strip). */
+  /** Kasse/offen and the running evening of every active device with a snapshot (status strip). */
   app.get('/devices/cashbox', (c) =>
     c.json(
       store.listActiveDevices().map((device) => {
-        if (!snapshots.has(device.id)) return { deviceId: device.id, label: device.label, cashbox: null, cashboxLabel: null }
+        if (!snapshots.has(device.id)) return { deviceId: device.id, label: device.label, cashbox: null, cashboxLabel: null, openSession: null }
         return snapshots.withDevice(device.id, () => ({
           deviceId: device.id,
           label: device.label,
           cashbox: getCashboxSummary(),
           cashboxLabel: getAppSettings().cashboxLabel,
+          openSession: getOpenSessionOverview(),
         }))
       })
     )

@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { formatCurrency, formatDateTime, formatSignedCurrency } from '@/domain/format'
 
+import { Icon } from './icons'
 import { api, ApiError, getApiDevice, setApiDevice, type DeviceSummary, type EntryKind, type ServerStatus, type StoredCommand } from './api'
 
 // ---- tiny router -----------------------------------------------------------
@@ -41,7 +42,7 @@ export function navigate(rawTo: string) {
   if (to === window.location.pathname + window.location.search) return
   window.history.pushState(null, '', to)
   listeners.forEach((listener) => listener())
-  window.scrollTo({ top: 0, behavior: 'smooth' })
+  window.scrollTo({ top: 0 })
 }
 
 export function usePath() {
@@ -58,13 +59,31 @@ export function usePath() {
   return path
 }
 
-export function Link(props: { to: string; className?: string; children: ReactNode }) {
+/** Current query string; updates on navigate() and back/forward. */
+export function useSearch() {
+  const [search, setSearch] = useState(() => window.location.search)
+  useEffect(() => {
+    const update = () => setSearch(window.location.search)
+    listeners.add(update)
+    window.addEventListener('popstate', update)
+    return () => {
+      listeners.delete(update)
+      window.removeEventListener('popstate', update)
+    }
+  }, [])
+  return search
+}
+
+export function Link(props: { to: string; className?: string; children: ReactNode; title?: string; 'aria-current'?: 'page'; 'aria-label'?: string }) {
   // Subscribes to the device selection so the href carries the current ?device=.
   useContext(AppContext)
   return (
     <a
       href={withDeviceParam(props.to)}
       className={props.className}
+      title={props.title}
+      aria-current={props['aria-current']}
+      aria-label={props['aria-label']}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return
         event.preventDefault()
@@ -123,7 +142,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const toast = useCallback((message: string, kind: Toast['kind'] = 'ok') => {
     const id = Date.now() + Math.random()
     setToasts((current) => [...current, { id, message, kind }])
-    setTimeout(() => setToasts((current) => current.filter((entry) => entry.id !== id)), 4200)
+    setTimeout(() => setToasts((current) => current.filter((entry) => entry.id !== id)), kind === 'error' ? 7000 : 4200)
   }, [])
 
   const applyDevice = useCallback((deviceId: string | null) => {
@@ -212,10 +231,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return (
     <AppContext.Provider value={value}>
       {children}
-      <div className="toast-host" aria-live="polite">
+      <div className="toast-host" aria-live="polite" aria-relevant="additions">
         {toasts.map((entry) => (
-          <div key={entry.id} className={`toast ${entry.kind === 'error' ? 'error' : ''}`}>
-            {entry.message}
+          <div key={entry.id} className={`toast ${entry.kind === 'error' ? 'error' : ''}`} role={entry.kind === 'error' ? 'alert' : 'status'}>
+            <Icon name={entry.kind === 'error' ? 'alert' : 'check'} size={16} />
+            <span>{entry.message}</span>
+            <button type="button" className="toast-close" aria-label="Hinweis schließen" onClick={() => setToasts((current) => current.filter((item) => item.id !== entry.id))}>
+              <Icon name="close" size={14} />
+            </button>
           </div>
         ))}
       </div>
@@ -274,6 +297,7 @@ export const COMMAND_LABELS: Record<StoredCommand['type'], string> = {
   'player.rename': 'Spieler umbenennen',
   'session.update': 'Abend ändern',
   'session.delete': 'Abend löschen',
+  'cashbox.withdraw': 'Entnahme',
   'audit.delete': 'Protokolleinträge löschen',
   'audit.purge': 'App-Protokoll leeren',
 }
@@ -283,6 +307,7 @@ export const ENTRY_KIND_LABELS: Record<EntryKind, string> = {
   payment: 'Zahlung',
   correction: 'Korrektur',
   absence: 'Abwesenheit',
+  withdrawal: 'Entnahme',
 }
 
 const PENALTY_LABELS: Record<string, string> = {
@@ -324,6 +349,8 @@ export function describeCommand(command: StoredCommand, names: Map<string, strin
       return `${session(payload.sessionId)}: ${describeSessionUpdate(payload)}`
     case 'session.delete':
       return `${session(payload.sessionId)} mit allen Buchungen löschen`
+    case 'cashbox.withdraw':
+      return `${formatCurrency(Number(payload.amountCents))} aus der Kasse – ${String(payload.note)}`
     case 'audit.delete': {
       const count = Array.isArray(payload.auditIds) ? payload.auditIds.length : 0
       return `${count} ${count === 1 ? 'Protokolleintrag' : 'Protokolleinträge'} der App löschen`
@@ -413,5 +440,6 @@ export function pendingDebtEffect(command: StoredCommand) {
   if (command.type === 'loss.void') return 'Eintrag wird gelöscht'
   if (command.type === 'player.rename') return `heißt künftig „${String(command.payload.name)}“`
   if (command.type === 'player.update') return 'Statusänderung'
+  if (command.type === 'cashbox.withdraw') return `−${formatCurrency(Number(command.payload.amountCents))} Entnahme`
   return COMMAND_LABELS[command.type]
 }

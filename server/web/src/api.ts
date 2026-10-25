@@ -1,4 +1,4 @@
-import type { HistoryEntry } from '@/domain/types'
+import type { CashboxSummary, HistoryEntry, SessionOverview } from '@/domain/types'
 import type { CommandType } from '@/remote/protocol'
 
 export type {
@@ -14,7 +14,7 @@ export type {
 export type { CommandType }
 
 /** Booking table addressed by entry.* override commands. */
-export type EntryKind = 'loss' | 'payment' | 'correction' | 'absence'
+export type EntryKind = 'loss' | 'payment' | 'correction' | 'absence' | 'withdrawal'
 
 /** History rows as served by the admin API: with the booking address and the raw note. */
 export type HistoryRow = HistoryEntry & { entryKind?: EntryKind | null; note?: string | null }
@@ -64,10 +64,26 @@ export type PlayerChartRow = {
   timeline: DebtPoint[]
 }
 
+export type CashboxEvent = {
+  id: string
+  at: string
+  kind: 'payment' | 'withdrawal'
+  playerId: string | null
+  playerName: string | null
+  amountCents: number
+  note: string | null
+  /** Cash on hand after this event (payments − withdrawals). */
+  cashOnHandCents: number
+}
+
 export type CashboxChart = {
   totalPaymentsCents: number
+  totalWithdrawalsCents: number
+  cashOnHandCents: number
   openDebtCents: number
   payments: Array<{ id: string; at: string; playerId: string; playerName: string; amountCents: number; cumulativeCents: number }>
+  withdrawals: Array<{ id: string; at: string; amountCents: number; note: string; sessionId: string | null; cumulativeCents: number }>
+  events: CashboxEvent[]
 }
 
 export type CommandStatus = 'pending' | 'applied' | 'rejected' | 'cancelled'
@@ -105,8 +121,10 @@ export type DeviceSummary = {
 export type DeviceCashbox = {
   deviceId: string
   label: string
-  cashbox: { totalPaymentsCents: number; totalOutstandingCents: number } | null
+  cashbox: CashboxSummary | null
   cashboxLabel: string | null
+  /** Running evening of that device, if any. */
+  openSession: SessionOverview | null
 }
 
 /** Status of the selected device plus all devices. */

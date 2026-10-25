@@ -51,10 +51,30 @@ export type PlayerChartRow = {
   timeline: DebtPoint[]
 }
 
+export type CashboxEvent = {
+  id: string
+  at: string
+  kind: 'payment' | 'withdrawal'
+  playerId: string | null
+  playerName: string | null
+  /** Always positive; withdrawals lower the cash. */
+  amountCents: number
+  note: string | null
+  /** Cash on hand after this event (payments − withdrawals). */
+  cashOnHandCents: number
+}
+
 export type CashboxChart = {
   totalPaymentsCents: number
+  totalWithdrawalsCents: number
+  /** What should physically be in the box: payments − withdrawals. */
+  cashOnHandCents: number
   openDebtCents: number
+  /** Payments only, cumulative (legacy shape). */
   payments: Array<{ id: string; at: string; playerId: string; playerName: string; amountCents: number; cumulativeCents: number }>
+  withdrawals: Array<{ id: string; at: string; amountCents: number; note: string; sessionId: string | null; cumulativeCents: number }>
+  /** Payments and withdrawals merged, oldest first, with the running cash on hand. */
+  events: CashboxEvent[]
 }
 
 export function listSeasons(): string[] {
@@ -216,10 +236,13 @@ export function getPlayersChart(): PlayerChartRow[] {
 }
 
 export function getCashboxChart(): CashboxChart {
-  const rows = sqliteAll<{ id: string; created_at: string; player_id: string; player_name: string; amount_cents: number }>(
-    `SELECT pmt.id, pmt.created_at, pmt.player_id, p.name AS player_name, pmt.amount_cents
+  const rows = sqliteAll<{ id: string; created_at: string; player_id: string; player_name: string; amount_cents: number; note: string | null }>(
+    `SELECT pmt.id, pmt.created_at, pmt.player_id, p.name AS player_name, pmt.amount_cents, pmt.note
      FROM payments pmt INNER JOIN players p ON p.id = pmt.player_id
      ORDER BY pmt.created_at ASC, pmt.id ASC`
+  )
+  const withdrawalRows = sqliteAll<{ id: string; created_at: string; amount_cents: number; note: string; session_id: string | null }>(
+    'SELECT id, created_at, amount_cents, note, session_id FROM cashbox_withdrawals ORDER BY created_at ASC, id ASC'
   )
   let cumulative = 0
   const payments = rows.map((row) => {
@@ -233,30 +256,56 @@ export function getCashboxChart(): CashboxChart {
       cumulativeCents: cumulative,
     }
   })
+  let withdrawn = 0
+  const withdrawals = withdrawalRows.map((row) => {
+    withdrawn += row.amount_cents
+    return { id: row.id, at: row.created_at, amountCents: row.amount_cents, note: row.note, sessionId: row.session_id, cumulativeCents: withdrawn }
+  })
+
+  // Same instant: payments first, so the running cash never dips below zero by ordering alone.
+  const merged = [
+    ...rows.map((row) => ({ id: row.id, at: row.created_at, kind: 'payment' as const, playerId: row.player_id, playerName: row.player_name, amountCents: row.amount_cents, note: row.note })),
+    ...withdrawalRows.map((row) => ({ id: row.id, at: row.created_at, kind: 'withdrawal' as const, playerId: null, playerName: null, amountCents: row.amount_cents, note: row.note })),
+  ].sort((a, b) => (a.at === b.at ? (a.kind === b.kind ? a.id.localeCompare(b.id) : a.kind === 'payment' ? -1 : 1) : a.at < b.at ? -1 : 1))
+  let cash = 0
+  const events: CashboxEvent[] = merged.map((event) => {
+    cash += event.kind === 'payment' ? event.amountCents : -event.amountCents
+    return { ...event, cashOnHandCents: cash }
+  })
+
   const debt = sqliteGet<{ total: number }>(
     `SELECT COALESCE((SELECT SUM(amount_cents) FROM loss_entries), 0)
           + COALESCE((SELECT SUM(amount_cents) FROM absence_charges), 0)
           + COALESCE((SELECT SUM(amount_cents) FROM corrections), 0)
           - COALESCE((SELECT SUM(amount_cents) FROM payments), 0) AS total`
   )
-  return { totalPaymentsCents: cumulative, openDebtCents: debt?.total ?? 0, payments }
+  return {
+    totalPaymentsCents: cumulative,
+    totalWithdrawalsCents: withdrawn,
+    cashOnHandCents: cumulative - withdrawn,
+    openDebtCents: debt?.total ?? 0,
+    payments,
+    withdrawals,
+    events,
+  }
 }
 
 // ---- booking lookups for the override UI ------------------------------------
 
-export type EntryKind = 'loss' | 'payment' | 'correction' | 'absence'
+export type EntryKind = 'loss' | 'payment' | 'correction' | 'absence' | 'withdrawal'
 
 export const ENTRY_TABLES: Record<EntryKind, { table: string; note: string }> = {
   loss: { table: 'loss_entries', note: 'note' },
   payment: { table: 'payments', note: 'note' },
   correction: { table: 'corrections', note: 'reason' },
   absence: { table: 'absence_charges', note: 'note' },
+  withdrawal: { table: 'cashbox_withdrawals', note: 'note' },
 }
 
 /** Maps history kinds onto the booking table addressed by entry.* commands. */
 export function entryKindOf(historyKind: string): EntryKind | null {
   if (historyKind === 'loss' || historyKind === 'beerround') return 'loss'
-  if (historyKind === 'payment' || historyKind === 'correction' || historyKind === 'absence') return historyKind
+  if (historyKind === 'payment' || historyKind === 'correction' || historyKind === 'absence' || historyKind === 'withdrawal') return historyKind
   return null
 }
 

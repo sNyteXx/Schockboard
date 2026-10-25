@@ -5,8 +5,16 @@ import { formatCurrency, formatDate, formatDateTime } from '@/domain/format'
 import { ApiError, type EveningsChart, type HistoryRow, type SessionDetail, type SessionOverview } from '../api'
 import { StackedBars } from '../charts/StackedBars'
 import { STACK_COLORS } from '../charts/scale'
-import { Card, ErrorView, Loading, Money, Page } from '../components'
-import { EntryActions, EntryPendingBadges, OverrideNotice, SessionActions, SessionPendingBadges, useEntryPending } from '../overrides'
+import { Avatar, Badge, Button, Card, Chips, EmptyState, ErrorView, Money, Page, Segmented, SkeletonChart, SkeletonRows, StatTile } from '../components'
+import { Icon } from '../icons'
+import {
+  BookingRow,
+  DeleteSessionDialog,
+  InlineSessionEditor,
+  OverrideNotice,
+  SessionPendingBadges,
+  type SessionRef,
+} from '../overrides'
 import { Link, navigate, useApi, usePendingOverrides } from '../state'
 import { HistoryList } from './History'
 
@@ -21,18 +29,21 @@ export function EveningsChartCard({ compact = false }: { compact?: boolean }) {
   const chart = useApi<EveningsChart>(`/charts/evenings?season=${season}`)
   const evenings = chart.data?.evenings ?? []
   const seasons = chart.data?.seasons ?? []
+  const total = evenings.reduce((sum, evening) => sum + evening.totalCents, 0)
   return (
     <Card
+      icon="calendar"
+      eyebrow={chart.data ? `${evenings.length} beendete Abende · ${formatCurrency(total)}` : 'Abende'}
       title="Summe pro Abend"
       actions={
         seasons.length > 0 ? (
-          <div className="segmented" role="group" aria-label="Saison">
-            {['all', ...seasons].map((value) => (
-              <button key={value} className={season === value ? 'active' : ''} onClick={() => setSeason(value)}>
-                {value === 'all' ? 'Alle' : value}
-              </button>
-            ))}
-          </div>
+          <Segmented
+            label="Saison"
+            size="sm"
+            value={season}
+            onChange={setSeason}
+            options={[{ value: 'all', label: 'Gesamt' }, ...seasons.map((value) => ({ value, label: value }))]}
+          />
         ) : null
       }
     >
@@ -51,52 +62,10 @@ export function EveningsChartCard({ compact = false }: { compact?: boolean }) {
             }))}
             onSelect={(id) => navigate(`/abende/${encodeURIComponent(id)}`)}
           />
-          {evenings.length > 0 ? (
-            <details className="table-toggle">
-              <summary>Als Tabelle</summary>
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Abend</th>
-                      <th className="num">Verluste</th>
-                      <th className="num">Bierrunden</th>
-                      <th className="num">Abwesenheit</th>
-                      <th className="num">Gesamt</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {[...evenings].reverse().map((evening) => (
-                      <tr key={evening.sessionId}>
-                        <td>
-                          <Link to={`/abende/${encodeURIComponent(evening.sessionId)}`}>{evening.title}</Link>
-                          <div className="muted small">{formatDate(evening.date)}</div>
-                        </td>
-                        <td className="num">
-                          <Money cents={evening.lossCents} />
-                        </td>
-                        <td className="num">
-                          <Money cents={evening.beerCents} />
-                        </td>
-                        <td className="num">
-                          <Money cents={evening.absenceCents} />
-                        </td>
-                        <td className="num">
-                          <Money cents={evening.totalCents} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </details>
-          ) : null}
-          <div className="muted small" style={{ marginTop: 8 }}>
-            Nur beendete Abende. Ausstehende Änderungen sind noch nicht enthalten.
-          </div>
+          <div className="card-foot">Nur beendete Abende. Balken anklicken öffnet den Abend. Ausstehende Änderungen sind noch nicht enthalten.</div>
         </>
       ) : chart.loading ? (
-        <div className="skeleton" />
+        <SkeletonChart height={compact ? 220 : 260} />
       ) : null}
     </Card>
   )
@@ -105,192 +74,279 @@ export function EveningsChartCard({ compact = false }: { compact?: boolean }) {
 export function SessionsPage() {
   const sessions = useApi<SessionOverview[]>('/sessions')
   const overrides = usePendingOverrides()
+  const [filter, setFilter] = useState<'all' | 'open' | 'closed'>('all')
+  const list = (sessions.data ?? []).filter((session) => filter === 'all' || session.status === filter)
+  const max = Math.max(1, ...(sessions.data ?? []).map((session) => session.totalLossCents + session.totalAbsenceCents))
   return (
-    <Page eyebrow="Spielabende" title="Abende">
-      {sessions.error ? <ErrorView error={sessions.error} /> : null}
-      {!sessions.error ? <EveningsChartCard /> : null}
-      {!sessions.data && sessions.loading ? <Loading /> : null}
-      {sessions.data && sessions.data.length === 0 ? <div className="empty">Noch keine Spielabende.</div> : null}
-      <div className="grid cols-3">
-        {(sessions.data ?? []).map((session) => (
-          <Link
-            key={session.id}
-            to={`/abende/${encodeURIComponent(session.id)}`}
-            className={`card link ${overrides.sessionDeletes.has(session.id) ? 'struck' : ''}`}
-          >
-            <div className="spread">
-              <h3 className="strike" style={{ margin: 0 }}>
-                {session.title}
-              </h3>
-              {session.status === 'open' ? <span className="badge yellow">läuft</span> : <span className="badge">beendet</span>}
+    <Page title="Abende" icon="calendar" context={sessions.data ? `${sessions.data.length} Spielabende` : undefined}>
+      {sessions.error ? <ErrorView error={sessions.error} /> : <EveningsChartCard />}
+      {!sessions.error ? (
+        <Card
+          className="table-card"
+          title="Alle Abende"
+          actions={
+            <Chips
+              label="Status"
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { value: 'all', label: 'Alle', count: sessions.data?.length },
+                { value: 'open', label: 'Läuft', count: sessions.data?.filter((session) => session.status === 'open').length },
+                { value: 'closed', label: 'Beendet', count: sessions.data?.filter((session) => session.status === 'closed').length },
+              ]}
+            />
+          }
+        >
+          {!sessions.data ? (
+            <SkeletonRows rows={5} />
+          ) : list.length === 0 ? (
+            <EmptyState icon="calendar" title="Noch keine Spielabende" text="Abende entstehen in der App auf dem Gerät." />
+          ) : (
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Abend</th>
+                    <th className="hide-md">Datum</th>
+                    <th className="num hide-md">Anwesend</th>
+                    <th className="num hide-lg">Einträge</th>
+                    <th className="num hide-lg">Abwesenheit</th>
+                    <th className="num balance-col">Summe</th>
+                    <th className="actions-col">
+                      <span className="sr-only">Öffnen</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.map((session) => {
+                    const total = session.totalLossCents + session.totalAbsenceCents
+                    return (
+                      <tr
+                        key={session.id}
+                        className={`clickable ${overrides.sessionDeletes.has(session.id) ? 'struck' : ''}`}
+                        onClick={(event) => {
+                          if (!(event.target as HTMLElement).closest('a')) navigate(`/abende/${encodeURIComponent(session.id)}`)
+                        }}
+                      >
+                        <td>
+                          <span className="session-cell">
+                            <span className={`session-icon ${session.status === 'open' ? 'live' : ''}`} aria-hidden>
+                              <Icon name={session.status === 'open' ? 'pulse' : 'calendar'} size={15} />
+                            </span>
+                            <span>
+                              <Link to={`/abende/${encodeURIComponent(session.id)}`} className="strike row-link">
+                                {session.title}
+                              </Link>
+                              <span className="cell-sub show-md">{formatDate(session.startedAt)}</span>
+                            </span>
+                            {session.status === 'open' ? <Badge tone="accent">läuft</Badge> : null}
+                          </span>
+                          <SessionPendingBadges sessionId={session.id} />
+                        </td>
+                        <td className="hide-md">{formatDate(session.startedAt)}</td>
+                        <td className="num hide-md">{session.presentCount}</td>
+                        <td className="num hide-lg">{session.lossCount}</td>
+                        <td className="num hide-lg">
+                          <Money cents={session.totalAbsenceCents} />
+                        </td>
+                        <td className="num balance-col">
+                          <span className="balance-cell">
+                            <Money cents={total} className="strike" />
+                            <span className="balance-bar" aria-hidden>
+                              <span className="balance-fill" style={{ width: `${(total / max) * 100}%` }} />
+                            </span>
+                          </span>
+                        </td>
+                        <td className="actions-col">
+                          <Icon name="chevron-right" size={16} className="muted" />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
-            <div className="muted small">{formatDate(session.startedAt)}</div>
-            <div className="stat-value strike" style={{ fontSize: 30 }}>
-              {formatCurrency(session.totalLossCents + session.totalAbsenceCents)}
-            </div>
-            <div className="row small muted" style={{ marginTop: 6 }}>
-              <span>{session.presentCount} anwesend</span>·<span>{session.lossCount} Einträge</span>
-              {session.totalAbsenceCents > 0 ? (
-                <>
-                  ·<span>{formatCurrency(session.totalAbsenceCents)} Abwesenheit</span>
-                </>
-              ) : null}
-            </div>
-            <SessionPendingBadges sessionId={session.id} />
-          </Link>
-        ))}
-      </div>
+          )}
+        </Card>
+      ) : null}
     </Page>
   )
 }
 
 type DetailWithRefs = Omit<SessionDetail, 'timeline'> & { timeline: HistoryRow[] }
 
-function LossRow({ entry }: { entry: SessionDetail['losses'][number] }) {
-  const { deletion } = useEntryPending('loss', entry.id)
-  const kind = entry.isBeerRound ? 'Bierrunde' : 'Verlust'
-  return (
-    <div className={`list-item ${deletion ? 'struck' : ''}`}>
-      <div style={{ minWidth: 0 }}>
-        <div className="row" style={{ gap: 8 }}>
-          <span className={`badge ${entry.isBeerRound ? 'info' : 'yellow'}`}>{entry.isBeerRound ? '🍺 Bierrunde' : 'Verlust'}</span>
-          <span className="title strike">{entry.playerName}</span>
-        </div>
-        <div className="sub">
-          {formatDateTime(entry.createdAt)}
-          {entry.note ? ` · ${entry.note}` : ''}
-        </div>
-        <EntryPendingBadges kind="loss" id={entry.id} />
-      </div>
-      <div className="item-end">
-        <span className="strike">
-          <Money cents={entry.amountCents} />
-        </span>
-        <EntryActions
-          booking={{ kind: 'loss', id: entry.id, amountCents: entry.amountCents, note: entry.note, description: `${kind} von ${entry.playerName}` }}
-        />
-      </div>
-    </div>
-  )
-}
-
-function AbsenceRow({ absence }: { absence: SessionDetail['absences'][number] }) {
-  const { deletion } = useEntryPending('absence', absence.id)
-  return (
-    <div className={`list-item ${deletion ? 'struck' : ''}`}>
-      <div style={{ minWidth: 0 }}>
-        <div className="title strike">{absence.playerName}</div>
-        <div className="sub">{absence.note ?? `Durchschnitt aus ${absence.averagePresentCoreCount} Stammspielern`}</div>
-        <EntryPendingBadges kind="absence" id={absence.id} />
-      </div>
-      <div className="item-end">
-        <span className="strike">
-          <Money cents={absence.amountCents} />
-        </span>
-        <EntryActions
-          booking={{
-            kind: 'absence',
-            id: absence.id,
-            amountCents: absence.amountCents,
-            note: absence.note,
-            description: `Abwesenheitsgebühr von ${absence.playerName}`,
-          }}
-        />
-      </div>
-    </div>
-  )
-}
-
 export function SessionDetailPage({ sessionId }: { sessionId: string }) {
   const detail = useApi<DetailWithRefs>(`/sessions/${encodeURIComponent(sessionId)}`)
   const overrides = usePendingOverrides()
+  const [editing, setEditing] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const data = detail.data
   const isOpen = data?.session.status === 'open'
   const deleting = overrides.sessionDeletes.has(sessionId)
+  const ref: SessionRef | null = data
+    ? {
+        id: data.session.id,
+        title: data.session.title,
+        startedAt: data.session.startedAt,
+        stakeCents: data.session.stakeCents,
+        bookingCount: data.losses.length + data.absences.length,
+      }
+    : null
+
+  const perPlayer = new Map<string, { id: string; name: string; cents: number; count: number }>()
+  for (const loss of data?.losses ?? []) {
+    const row = perPlayer.get(loss.playerId) ?? { id: loss.playerId, name: loss.playerName, cents: 0, count: 0 }
+    row.cents += loss.amountCents
+    row.count += 1
+    perPlayer.set(loss.playerId, row)
+  }
+  for (const absence of data?.absences ?? []) {
+    const row = perPlayer.get(absence.playerId) ?? { id: absence.playerId, name: absence.playerName, cents: 0, count: 0 }
+    row.cents += absence.amountCents
+    perPlayer.set(absence.playerId, row)
+  }
+  const playerRows = [...perPlayer.values()].sort((a, b) => b.cents - a.cents)
+  const playerMax = Math.max(1, ...playerRows.map((row) => row.cents))
 
   return (
     <Page
-      eyebrow="Spielabend"
       title={data?.session.title ?? 'Abend'}
+      icon={isOpen ? 'pulse' : 'calendar'}
+      context={
+        data ? (
+          <>
+            {isOpen ? 'läuft seit' : 'gespielt am'} {formatDateTime(data.session.startedAt)}
+            {data.session.closedAt ? ` · beendet ${formatDateTime(data.session.closedAt)}` : ''}
+            {data.session.notes ? ` · ${data.session.notes}` : ''}
+          </>
+        ) : undefined
+      }
       actions={
         <>
-          {data ? (
-            <SessionActions
-              session={{
-                id: data.session.id,
-                title: data.session.title,
-                startedAt: data.session.startedAt,
-                stakeCents: data.session.stakeCents,
-                bookingCount: data.losses.length + data.absences.length,
-              }}
-            />
-          ) : null}
-          <Link to="/abende" className="btn ghost">
-            Alle Abende
+          <Link to="/abende" className="btn btn-ghost btn-sm">
+            <Icon name="chevron-left" size={15} /> Alle Abende
           </Link>
+          {ref ? (
+            <>
+              <Button variant="secondary" size="sm" icon="pencil" disabled={deleting || editing} onClick={() => setEditing(true)}>
+                Bearbeiten
+              </Button>
+              <Button variant="danger" size="sm" icon="trash" disabled={deleting} onClick={() => setConfirmDelete(true)}>
+                Löschen
+              </Button>
+            </>
+          ) : null}
         </>
       }
     >
       {detail.error ? <ErrorView error={detail.error.status === 404 ? new ApiError(404, 'not_found', 'Abend nicht gefunden.') : detail.error} /> : null}
-      {!data && detail.loading ? <Loading /> : null}
-      {data ? (
+      {!data && detail.loading ? (
+        <div className="grid two">
+          <Card>
+            <SkeletonRows rows={6} avatar />
+          </Card>
+          <Card>
+            <SkeletonRows rows={4} avatar />
+          </Card>
+        </div>
+      ) : null}
+      {data && ref ? (
         <>
+          {editing ? (
+            <Card title="Abend bearbeiten" icon="pencil">
+              <InlineSessionEditor session={ref} onClose={() => setEditing(false)} />
+            </Card>
+          ) : null}
           <SessionPendingBadges sessionId={sessionId} />
-          <div className={`grid cols-3 ${deleting ? 'struck' : ''}`}>
-            <section className={`card ${isOpen ? 'accent' : ''}`}>
-              <div className="stat-label">{isOpen ? 'Läuft seit' : 'Gespielt am'}</div>
-              <div className="stat-value" style={{ fontSize: 26 }}>
-                {formatDateTime(data.session.startedAt)}
-              </div>
-              <div className="muted small">
-                {data.session.closedAt ? `beendet ${formatDateTime(data.session.closedAt)}` : 'noch offen'}
-                {data.session.notes ? ` · ${data.session.notes}` : ''}
-              </div>
-            </section>
-            <section className="card">
-              <div className="stat-label muted">Verluste & Bierrunden</div>
-              <div className="stat-value strike">{formatCurrency(data.session.totalLossCents)}</div>
-              <div className="muted small">
-                {data.session.lossCount} Einträge · Einsatz {formatCurrency(data.session.stakeCents)}
-              </div>
-            </section>
-            <section className="card">
-              <div className="stat-label muted">Abwesenheit</div>
-              <div className="stat-value strike">{formatCurrency(data.session.totalAbsenceCents)}</div>
-              <div className="muted small">{data.session.presentCount} anwesend</div>
-            </section>
+          <div className={`stat-grid four ${deleting ? 'struck' : ''}`}>
+            <StatTile label="Summe" icon="wallet" tone="accent" value={<span className="strike">{formatCurrency(data.session.totalLossCents + data.session.totalAbsenceCents)}</span>} hint={isOpen ? 'läuft noch' : 'beendet'} />
+            <StatTile label="Verluste & Bierrunden" icon="dice" value={<span className="strike">{formatCurrency(data.session.totalLossCents)}</span>} hint={`${data.session.lossCount} Einträge`} />
+            <StatTile label="Abwesenheit" icon="person" value={<span className="strike">{formatCurrency(data.session.totalAbsenceCents)}</span>} hint={`${data.absences.length} Gebühren`} />
+            <StatTile label="Einsatz" icon="cash" value={formatCurrency(data.session.stakeCents)} hint={`${data.session.presentCount} anwesend`} />
           </div>
 
-          <OverrideNotice />
-
-          <div className="grid cols-2" style={{ alignItems: 'start' }}>
-            <Card title="Einträge">
-              {data.losses.length === 0 ? <div className="empty">Keine Einträge.</div> : null}
-              <div className="list">
-                {data.losses.map((entry) => (
-                  <LossRow key={entry.id} entry={entry} />
-                ))}
-              </div>
+          <div className="dash">
+            <Card className="span-7" icon="dice" title="Einträge" eyebrow={`${data.losses.length} Buchungen`}>
+              {data.losses.length === 0 ? (
+                <EmptyState compact icon="dice" title="Keine Einträge" />
+              ) : (
+                <ul className="list">
+                  {data.losses.map((entry) => {
+                    const kind = entry.isBeerRound ? 'Bierrunde' : 'Verlust'
+                    return (
+                      <BookingRow
+                        key={entry.id}
+                        booking={{ kind: 'loss', id: entry.id, amountCents: entry.amountCents, note: entry.note, description: `${kind} von ${entry.playerName}` }}
+                        lead={<Avatar id={entry.playerId} name={entry.playerName} size={30} />}
+                        title={entry.playerName}
+                        meta={
+                          <>
+                            <Badge tone={entry.isBeerRound ? 'info' : 'accent'} icon={entry.isBeerRound ? 'beer' : 'dice'}>
+                              {kind}
+                            </Badge>{' '}
+                            {formatDateTime(entry.createdAt)}
+                            {entry.note ? ` · ${entry.note}` : ''}
+                          </>
+                        }
+                        amount={<Money cents={entry.amountCents} />}
+                      />
+                    )
+                  })}
+                </ul>
+              )}
             </Card>
 
-            <div className="stack" style={{ gap: 18 }}>
-              <Card title="Abwesenheitsgebühren">
-                {data.absences.length === 0 ? (
-                  <div className="empty">{isOpen ? 'Werden beim Abschluss auf dem Gerät berechnet.' : 'Keine.'}</div>
-                ) : null}
-                <div className="list">
-                  {data.absences.map((absence) => (
-                    <AbsenceRow key={absence.id} absence={absence} />
-                  ))}
-                </div>
+            <div className="span-5 stack">
+              <Card icon="people" title="Pro Spieler">
+                {playerRows.length === 0 ? (
+                  <EmptyState compact icon="people" title="Noch nichts gebucht" />
+                ) : (
+                  <ol className="evening-bars">
+                    {playerRows.map((row) => (
+                      <li key={row.id}>
+                        <Avatar id={row.id} name={row.name} size={26} />
+                        <span className="evening-bar-name">{row.name}</span>
+                        <span className="evening-bar-track" aria-hidden>
+                          <span style={{ width: `${(row.cents / playerMax) * 100}%`, background: STACK_COLORS.loss }} />
+                        </span>
+                        <span className="amount">{formatCurrency(row.cents)}</span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
               </Card>
-              <Card title="Anwesenheit">
-                <div className="row" style={{ gap: 6 }}>
+              <Card icon="person" title="Abwesenheitsgebühren">
+                {data.absences.length === 0 ? (
+                  <EmptyState compact icon="person" title={isOpen ? 'Noch keine' : 'Keine'} text={isOpen ? 'Werden beim Abschluss auf dem Gerät berechnet.' : undefined} />
+                ) : (
+                  <ul className="list">
+                    {data.absences.map((absence) => (
+                      <BookingRow
+                        key={absence.id}
+                        booking={{
+                          kind: 'absence',
+                          id: absence.id,
+                          amountCents: absence.amountCents,
+                          note: absence.note,
+                          description: `Abwesenheitsgebühr von ${absence.playerName}`,
+                        }}
+                        lead={<Avatar id={absence.playerId} name={absence.playerName} size={30} muted />}
+                        title={absence.playerName}
+                        meta={absence.note ?? `Durchschnitt aus ${absence.averagePresentCoreCount} Stammspielern`}
+                        amount={<Money cents={absence.amountCents} />}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </Card>
+              <Card icon="check" title="Anwesenheit">
+                <div className="attendance">
                   {data.attendance.map((row) => (
-                    <span key={row.id} className={`badge ${row.present ? 'success' : ''}`}>
+                    <span key={row.id} className={`attendee ${row.present ? 'present' : 'absent'}`}>
+                      <Avatar id={row.playerId} name={row.playerName} size={24} muted={!row.present} />
                       {row.playerName}
                       {row.isCore ? '' : ' (Gast)'}
-                      {row.present ? '' : ' – abwesend'}
+                      <span className="sr-only">{row.present ? ' anwesend' : ' abwesend'}</span>
                     </span>
                   ))}
                 </div>
@@ -298,9 +354,12 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
             </div>
           </div>
 
-          <Card title="Verlauf">
+          <OverrideNotice />
+
+          <Card icon="time" title="Verlauf des Abends">
             <HistoryList entries={data.timeline} hideSessionTitle editable />
           </Card>
+          {confirmDelete ? <DeleteSessionDialog session={ref} onClose={() => setConfirmDelete(false)} /> : null}
         </>
       ) : null}
     </Page>

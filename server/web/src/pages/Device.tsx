@@ -3,8 +3,9 @@ import { useState, type FormEvent } from 'react'
 import { formatDateTime } from '@/domain/format'
 
 import { ApiError, api, type DeviceSummary } from '../api'
-import { Card, DeviceDot, isNewDevice, Page, relativeTime, SyncStatus } from '../components'
-import { Modal } from '../overrides'
+import { Badge, Button, Card, DeviceDot, EmptyState, Field, isNewDevice, Notice, Page, relativeTime, SkeletonRows, StatTile, SyncStatus } from '../components'
+import { ConfirmDialog, Modal } from '../dialog'
+import { Icon } from '../icons'
 import { useApp } from '../state'
 
 type Dialog =
@@ -38,84 +39,90 @@ export function DevicePage() {
 
   return (
     <Page
-      eyebrow="Verbindung"
       title="Geräte"
+      icon="tablet"
+      context={`${activeDevices.length} von höchstens ${status?.maxDevices ?? '–'} aktiv · jedes Gerät ist eine eigene Kasse`}
       actions={
         isAdmin && activeDevices.length > 1 ? (
-          <button className="btn ghost" onClick={() => setDialog({ kind: 'replace' })}>
+          <Button variant="secondary" size="sm" icon="swap" onClick={() => setDialog({ kind: 'replace' })}>
             Gerät ersetzen
-          </button>
+          </Button>
         ) : null
       }
     >
-      <div className="banner info small">
-        <div>
-          <strong>Jedes Gerät ist eine eigene Kasse.</strong> Spieler, Abende und Buchungen eines Geräts sind unabhängig von den anderen – der
-          Server führt nichts zusammen. Oben in der Seitenleiste wählst du, welches Gerät du ansiehst; alle Seiten und Aufträge beziehen
-          sich auf dieses Gerät. Aufträge übernimmt es still beim nächsten Hintergrund-Sync (meist innerhalb von 1–15 Min.).
-        </div>
-      </div>
+      <div className="dash">
+        <Card className="span-8" icon="tablet" title="Aktive Geräte">
+          {activeDevices.length === 0 ? (
+            <EmptyState icon="tablet" title="Noch kein Gerät verbunden" text="Die App meldet sich beim ersten Start automatisch an." />
+          ) : (
+            <ul className="list">
+              {activeDevices.map((device) => (
+                <DeviceItem
+                  key={device.id}
+                  device={device}
+                  selected={device.id === selectedId}
+                  isAdmin={isAdmin}
+                  busy={busy}
+                  onSelect={() => selectDevice(device.id)}
+                  onDialog={(kind) => setDialog({ kind, device })}
+                />
+              ))}
+            </ul>
+          )}
+        </Card>
 
-      <Card title={`Aktive Geräte (${activeDevices.length} von höchstens ${status?.maxDevices ?? '–'})`}>
-        {activeDevices.length === 0 ? (
-          <div className="empty">Noch kein Gerät verbunden. Die App meldet sich beim ersten Start automatisch an.</div>
-        ) : null}
-        <div className="list">
-          {activeDevices.map((device) => (
-            <DeviceItem
-              key={device.id}
-              device={device}
-              selected={device.id === selectedId}
-              isAdmin={isAdmin}
-              busy={busy}
-              onSelect={() => selectDevice(device.id)}
-              onDialog={(kind) => setDialog({ kind, device })}
-            />
-          ))}
-        </div>
-      </Card>
-
-      {status?.paired ? (
-        <Card title={`Datenstand von „${status.label ?? ''}“`}>
-          <div className="stack">
-            <SyncStatus />
-            <div className="muted small">
-              Schema-Version: {status.schemaVersion ?? '—'}
-              {status.snapshotSizeBytes ? ` · Snapshot ${(status.snapshotSizeBytes / 1024).toFixed(0)} KB` : ''}
-              {' · '}
-              {status.pendingCommands} ausstehende Aufträge
+        <Card className="span-4" icon="cloud-up" title={status?.paired ? `Datenstand von „${status.label ?? ''}“` : 'Datenstand'}>
+          {status?.paired ? (
+            <div className="stack">
+              <SyncStatus />
+              <div className="stat-grid">
+                <StatTile label="Schema" value={status.schemaVersion ?? '—'} />
+                <StatTile label="Snapshot" value={status.snapshotSizeBytes ? `${(status.snapshotSizeBytes / 1024).toFixed(0)} KB` : '—'} />
+                <StatTile label="Ausstehend" value={status.pendingCommands} hint="Aufträge" />
+              </div>
             </div>
+          ) : status ? (
+            <EmptyState compact icon="cloud-up" title="Kein Datenstand" />
+          ) : (
+            <SkeletonRows rows={3} />
+          )}
+        </Card>
+
+        <Card className="span-6" icon="add" title="Neues Gerät verbinden">
+          <div className="prose">
+            <p>
+              Keine Kopplung nötig: Jede App, die auf diesen Server zeigt, meldet sich beim ersten Start selbst an und erscheint hier als neues Gerät
+              (Kennzeichen <Badge tone="info">Neu</Badge> für 24 Stunden) – bis zu {status?.maxDevices ?? '–'} aktive Geräte.
+            </p>
+            <p className="muted">
+              Neu installiert oder Gerät gewechselt? Die App kommt als neues Gerät mit ihrem eigenen Stand. Danach das alte Gerät sperren – oder
+              „Gerät ersetzen“ nutzen, dann übernimmt das neue auch den Namen des alten. Ein unbekanntes Gerät? Sofort sperren.
+            </p>
+            {!isAdmin ? <Notice tone="info">Geräte umbenennen, sperren oder entfernen dürfen nur Administratoren.</Notice> : null}
           </div>
         </Card>
-      ) : null}
 
-      <Card title="Neues Gerät verbinden">
-        <div className="stack small">
-          <div>
-            Keine Kopplung nötig: Jede App, die auf diesen Server zeigt, meldet sich beim ersten Start selbst an und erscheint hier als neues
-            Gerät (mit Kennzeichen <span className="badge info">Neu</span> für 24 Stunden) – bis zu {status?.maxDevices ?? '–'} aktive Geräte.
-          </div>
-          <div className="muted">
-            Neu installiert oder Gerät gewechselt? Die App kommt als neues Gerät mit ihrem eigenen Stand. Danach das alte Gerät sperren – oder
-            „Gerät ersetzen“ nutzen, dann übernimmt das neue auch den Namen des alten. Ein unbekanntes Gerät? Sofort sperren.
-          </div>
-          {!isAdmin ? <div className="banner small">Geräte umbenennen, sperren oder entfernen dürfen nur Administratoren.</div> : null}
-        </div>
-      </Card>
-
-      {blocked.length > 0 ? (
-        <Card title="Gesperrte Geräte">
-          <div className="muted small" style={{ marginBottom: 8 }}>
-            Gesperrte Geräte können nicht mehr synchronisieren; ihre offenen Aufträge wurden storniert. Startet die App dort erneut, meldet sie
-            sich als neues Gerät an.
-          </div>
-          <div className="list">
-            {blocked.map((device) => (
-              <DeviceItem key={device.id} device={device} isAdmin={isAdmin} busy={busy} onDialog={(kind) => setDialog({ kind, device })} />
-            ))}
+        <Card className="span-6" icon="info" title="Jedes Gerät ist eine eigene Kasse">
+          <div className="prose muted">
+            <p>
+              Spieler, Abende und Buchungen eines Geräts sind unabhängig von den anderen – der Server führt nichts zusammen. Oben rechts wählst du,
+              welches Gerät du ansiehst; alle Seiten und Aufträge beziehen sich darauf.
+            </p>
+            <p>Aufträge übernimmt es still beim nächsten Hintergrund-Sync (meist innerhalb von 1–15 Min.).</p>
           </div>
         </Card>
-      ) : null}
+
+        {blocked.length > 0 ? (
+          <Card className="span-12" icon="shield" title="Gesperrte Geräte" eyebrow="können nicht mehr synchronisieren">
+            <ul className="list">
+              {blocked.map((device) => (
+                <DeviceItem key={device.id} device={device} isAdmin={isAdmin} busy={busy} onDialog={(kind) => setDialog({ kind, device })} />
+              ))}
+            </ul>
+            <div className="card-foot">Ihre offenen Aufträge wurden storniert. Startet die App dort erneut, meldet sie sich als neues Gerät an.</div>
+          </Card>
+        ) : null}
+      </div>
 
       {dialog?.kind === 'rename' ? (
         <RenameDialog
@@ -123,85 +130,54 @@ export function DevicePage() {
           busy={busy}
           onClose={close}
           onSave={(label) =>
-            run(
-              () => api(`/devices/${encodeURIComponent(dialog.device.id)}`, { method: 'PATCH', body: JSON.stringify({ label }) }),
-              'Gerät umbenannt.'
-            )
+            run(() => api(`/devices/${encodeURIComponent(dialog.device.id)}`, { method: 'PATCH', body: JSON.stringify({ label }) }), 'Gerät umbenannt.')
           }
         />
       ) : null}
 
       {dialog?.kind === 'revoke' ? (
-        <Modal title={`„${dialog.device.label}“ sperren?`} onClose={close} tone="danger">
-          <div className="stack">
-            <div>
-              Das Gerät kann danach nicht mehr synchronisieren
-              {dialog.device.pendingCommands > 0 ? `, seine ${dialog.device.pendingCommands} ausstehenden Aufträge werden storniert` : ''}. Sein
-              Datenstand ist im Web nicht mehr sichtbar. Die Daten auf dem Gerät selbst bleiben unberührt.
-            </div>
-            <div className="muted small">Startet die App dort erneut, meldet sie sich als neues Gerät an.</div>
-            <div className="row" style={{ justifyContent: 'flex-end' }}>
-              <button type="button" className="btn ghost" onClick={close}>
-                Abbrechen
-              </button>
-              <button
-                type="button"
-                className="btn danger solid"
-                disabled={busy}
-                onClick={() => run(() => api(`/devices/${encodeURIComponent(dialog.device.id)}/revoke`, { method: 'POST' }), 'Gerät gesperrt.')}
-              >
-                Sperren
-              </button>
-            </div>
-          </div>
-        </Modal>
+        <ConfirmDialog
+          title={`„${dialog.device.label}“ sperren?`}
+          icon="shield"
+          tone="danger"
+          confirmLabel="Sperren"
+          busy={busy}
+          onClose={close}
+          onConfirm={() => run(() => api(`/devices/${encodeURIComponent(dialog.device.id)}/revoke`, { method: 'POST' }), 'Gerät gesperrt.')}
+        >
+          <p>
+            Das Gerät kann danach nicht mehr synchronisieren
+            {dialog.device.pendingCommands > 0 ? `, seine ${dialog.device.pendingCommands} ausstehenden Aufträge werden storniert` : ''}. Sein Datenstand ist
+            im Web nicht mehr sichtbar. Die Daten auf dem Gerät selbst bleiben unberührt.
+          </p>
+          <p className="muted">Startet die App dort erneut, meldet sie sich als neues Gerät an.</p>
+        </ConfirmDialog>
       ) : null}
 
       {dialog?.kind === 'remove' ? (
-        <Modal title={`„${dialog.device.label}“ entfernen?`} onClose={close} tone="danger">
-          <div className="stack">
-            <div>Entfernt das gesperrte Gerät mit seinem letzten Datenstand und Auftragsverlauf vom Server. Das lässt sich nicht rückgängig machen.</div>
-            <div className="row" style={{ justifyContent: 'flex-end' }}>
-              <button type="button" className="btn ghost" onClick={close}>
-                Abbrechen
-              </button>
-              <button
-                type="button"
-                className="btn danger solid"
-                disabled={busy}
-                onClick={() => run(() => api(`/devices/${encodeURIComponent(dialog.device.id)}`, { method: 'DELETE' }), 'Gerät entfernt.')}
-              >
-                Entfernen
-              </button>
-            </div>
-          </div>
-        </Modal>
+        <ConfirmDialog
+          title={`„${dialog.device.label}“ entfernen?`}
+          tone="danger"
+          confirmLabel="Entfernen"
+          busy={busy}
+          onClose={close}
+          onConfirm={() => run(() => api(`/devices/${encodeURIComponent(dialog.device.id)}`, { method: 'DELETE' }), 'Gerät entfernt.')}
+        >
+          <p>Entfernt das gesperrte Gerät mit seinem letzten Datenstand und Auftragsverlauf vom Server. Das lässt sich nicht rückgängig machen.</p>
+        </ConfirmDialog>
       ) : null}
 
       {dialog?.kind === 'clear' ? (
-        <Modal title={`Auftragsverlauf von „${dialog.device.label}“ leeren?`} onClose={close} tone="danger">
-          <div className="stack">
-            <div>Alle abgeschlossenen Aufträge (übernommen, abgelehnt, storniert) dieses Geräts werden gelöscht. Ausstehende bleiben erhalten.</div>
-            <div className="row" style={{ justifyContent: 'flex-end' }}>
-              <button type="button" className="btn ghost" onClick={close}>
-                Abbrechen
-              </button>
-              <button
-                type="button"
-                className="btn danger solid"
-                disabled={busy}
-                onClick={() =>
-                  run(
-                    () => api(`/commands?device=${encodeURIComponent(dialog.device.id)}`, { method: 'DELETE' }),
-                    'Auftragsverlauf geleert.'
-                  )
-                }
-              >
-                Verlauf leeren
-              </button>
-            </div>
-          </div>
-        </Modal>
+        <ConfirmDialog
+          title={`Auftragsverlauf von „${dialog.device.label}“ leeren?`}
+          tone="danger"
+          confirmLabel="Verlauf leeren"
+          busy={busy}
+          onClose={close}
+          onConfirm={() => run(() => api(`/commands?device=${encodeURIComponent(dialog.device.id)}`, { method: 'DELETE' }), 'Auftragsverlauf geleert.')}
+        >
+          <p>Alle abgeschlossenen Aufträge (übernommen, abgelehnt, storniert) dieses Geräts werden gelöscht. Ausstehende bleiben erhalten.</p>
+        </ConfirmDialog>
       ) : null}
 
       {dialog?.kind === 'replace' ? (
@@ -232,53 +208,56 @@ function DeviceItem(props: {
   const { device } = props
   const active = device.status === 'active'
   return (
-    <div className={`list-item device-row ${props.selected ? 'selected' : ''}`}>
-      <div style={{ minWidth: 0 }}>
-        <div className="row" style={{ gap: 8 }}>
-          <DeviceDot device={device} />
-          <span className="title">{device.label}</span>
-          {active && isNewDevice(device) ? <span className="badge info">Neu</span> : null}
-          {active ? null : <span className="badge danger">gesperrt</span>}
-          {props.selected ? <span className="badge yellow">ausgewählt</span> : null}
-          {device.pendingCommands > 0 ? <span className="badge pending">{device.pendingCommands} ausstehend</span> : null}
+    <li className={`list-row device-row ${props.selected ? 'selected' : ''}`}>
+      <div className="list-row-main wrap">
+        <span className={`list-lead ${active ? '' : 'tone-danger'}`}>
+          <Icon name="tablet" size={17} />
+        </span>
+        <div className="list-text">
+          <div className="list-title">
+            <DeviceDot device={device} live={active} /> {device.label}
+            {active && isNewDevice(device) ? <Badge tone="info">Neu</Badge> : null}
+            {props.selected ? <Badge tone="accent" icon="eye">angezeigt</Badge> : null}
+            {device.pendingCommands > 0 ? <Badge tone="pending" icon="layers">{device.pendingCommands} ausstehend</Badge> : null}
+          </div>
+          <div className="list-meta">
+            {device.label !== device.deviceName ? `${device.deviceName} · ` : ''}
+            verbunden seit {formatDateTime(device.pairedAt)}
+            {device.revokedAt ? ` · gesperrt ${formatDateTime(device.revokedAt)}` : ''}
+          </div>
+          <div className="list-meta">
+            zuletzt gesehen {relativeTime(device.lastSeenAt)} · letzter Stand {relativeTime(device.lastSnapshotAt)}
+          </div>
         </div>
-        <div className="sub">
-          {device.label !== device.deviceName ? `${device.deviceName} · ` : ''}
-          verbunden seit {formatDateTime(device.pairedAt)}
-          {device.revokedAt ? ` · gesperrt ${formatDateTime(device.revokedAt)}` : ''}
-        </div>
-        <div className="sub">
-          zuletzt gesehen {relativeTime(device.lastSeenAt)} · letzter Stand {relativeTime(device.lastSnapshotAt)}
+        <div className="row-actions labeled">
+          {active && props.onSelect && !props.selected ? (
+            <Button variant="primary" size="sm" icon="eye" onClick={props.onSelect}>
+              Ansehen
+            </Button>
+          ) : null}
+          {props.isAdmin ? (
+            <Button variant="ghost" size="sm" icon="pencil" disabled={props.busy} onClick={() => props.onDialog('rename')}>
+              Umbenennen
+            </Button>
+          ) : null}
+          {active ? (
+            <Button variant="ghost" size="sm" icon="trash" disabled={props.busy} onClick={() => props.onDialog('clear')}>
+              Verlauf leeren
+            </Button>
+          ) : null}
+          {props.isAdmin && active ? (
+            <Button variant="danger" size="sm" icon="shield" disabled={props.busy} onClick={() => props.onDialog('revoke')}>
+              Sperren
+            </Button>
+          ) : null}
+          {props.isAdmin && !active ? (
+            <Button variant="danger" size="sm" icon="trash" disabled={props.busy} onClick={() => props.onDialog('remove')}>
+              Entfernen
+            </Button>
+          ) : null}
         </div>
       </div>
-      <div className="row" style={{ gap: 6 }}>
-        {active && props.onSelect && !props.selected ? (
-          <button className="btn small" onClick={props.onSelect}>
-            Ansehen
-          </button>
-        ) : null}
-        {props.isAdmin ? (
-          <button className="btn ghost small" disabled={props.busy} onClick={() => props.onDialog('rename')}>
-            Umbenennen
-          </button>
-        ) : null}
-        {active ? (
-          <button className="btn ghost small" disabled={props.busy} onClick={() => props.onDialog('clear')}>
-            Auftragsverlauf leeren
-          </button>
-        ) : null}
-        {props.isAdmin && active ? (
-          <button className="btn danger small" disabled={props.busy} onClick={() => props.onDialog('revoke')}>
-            Sperren
-          </button>
-        ) : null}
-        {props.isAdmin && !active ? (
-          <button className="btn danger small" disabled={props.busy} onClick={() => props.onDialog('remove')}>
-            Entfernen
-          </button>
-        ) : null}
-      </div>
-    </div>
+    </li>
   )
 }
 
@@ -289,45 +268,46 @@ function RenameDialog(props: { device: DeviceSummary; busy: boolean; onClose: ()
     if (label.trim()) props.onSave(label.trim())
   }
   return (
-    <Modal title="Gerät umbenennen" onClose={props.onClose}>
-      <form className="stack" onSubmit={submit}>
-        <label className="field">
-          Name im Web (z.&nbsp;B. „Tablet Stammtisch“)
-          <input value={label} maxLength={60} onChange={(event) => setLabel(event.target.value)} required />
-        </label>
-        <div className="muted small">Angemeldet als „{props.device.deviceName}“. Der Name gilt nur hier im Web.</div>
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={props.onClose}>
+    <Modal title="Gerät umbenennen" icon="pencil" onClose={props.onClose} size="sm">
+      <form className="form" onSubmit={submit}>
+        <Field label="Name im Web" hint={`Angemeldet als „${props.device.deviceName}“. Der Name gilt nur hier im Web.`}>
+          <input value={label} maxLength={60} onChange={(event) => setLabel(event.target.value)} required placeholder="z. B. Tablet Stammtisch" />
+        </Field>
+        <div className="form-actions end">
+          <Button variant="ghost" onClick={props.onClose}>
             Abbrechen
-          </button>
-          <button type="submit" className="btn" disabled={props.busy || !label.trim()}>
+          </Button>
+          <Button type="submit" variant="primary" disabled={props.busy || !label.trim()}>
             Speichern
-          </button>
+          </Button>
         </div>
       </form>
     </Modal>
   )
 }
 
-function ReplaceDialog(props: {
-  devices: DeviceSummary[]
-  busy: boolean
-  onClose: () => void
-  onReplace: (oldId: string, newId: string) => void
-}) {
+function ReplaceDialog(props: { devices: DeviceSummary[]; busy: boolean; onClose: () => void; onReplace: (oldId: string, newId: string) => void }) {
   const newest = [...props.devices].sort((a, b) => b.pairedAt.localeCompare(a.pairedAt))
   const [newId, setNewId] = useState(newest[0]?.id ?? '')
   const [oldId, setOldId] = useState(props.devices.find((device) => device.id !== newest[0]?.id)?.id ?? '')
   const valid = oldId && newId && oldId !== newId
   return (
-    <Modal title="Gerät ersetzen" onClose={props.onClose} tone="danger">
-      <div className="stack">
-        <div className="small">
-          Für eine Neuinstallation oder ein neues Tablet: Das alte Gerät wird gesperrt (seine ausstehenden Aufträge werden storniert), das neue
-          übernimmt seinen Namen. Die Daten werden <strong>nicht</strong> zusammengeführt – das neue Gerät zeigt seinen eigenen Stand.
-        </div>
-        <label className="field">
-          Altes Gerät (wird gesperrt)
+    <ConfirmDialog
+      title="Gerät ersetzen"
+      icon="swap"
+      tone="danger"
+      confirmLabel="Ersetzen"
+      busy={props.busy}
+      disabled={!valid}
+      onClose={props.onClose}
+      onConfirm={() => props.onReplace(oldId, newId)}
+    >
+      <div className="form">
+        <p className="muted">
+          Für eine Neuinstallation oder ein neues Tablet: Das alte Gerät wird gesperrt (seine ausstehenden Aufträge werden storniert), das neue übernimmt
+          seinen Namen. Die Daten werden <strong>nicht</strong> zusammengeführt.
+        </p>
+        <Field label="Altes Gerät (wird gesperrt)">
           <select value={oldId} onChange={(event) => setOldId(event.target.value)}>
             {props.devices.map((device) => (
               <option key={device.id} value={device.id}>
@@ -335,9 +315,8 @@ function ReplaceDialog(props: {
               </option>
             ))}
           </select>
-        </label>
-        <label className="field">
-          Neues Gerät (übernimmt den Namen)
+        </Field>
+        <Field label="Neues Gerät (übernimmt den Namen)">
           <select value={newId} onChange={(event) => setNewId(event.target.value)}>
             {newest.map((device) => (
               <option key={device.id} value={device.id}>
@@ -346,17 +325,9 @@ function ReplaceDialog(props: {
               </option>
             ))}
           </select>
-        </label>
-        {oldId && oldId === newId ? <div className="banner error small">Bitte zwei verschiedene Geräte wählen.</div> : null}
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
-          <button type="button" className="btn ghost" onClick={props.onClose}>
-            Abbrechen
-          </button>
-          <button type="button" className="btn danger solid" disabled={props.busy || !valid} onClick={() => props.onReplace(oldId, newId)}>
-            Ersetzen
-          </button>
-        </div>
+        </Field>
+        {oldId && oldId === newId ? <Notice tone="danger">Bitte zwei verschiedene Geräte wählen.</Notice> : null}
       </div>
-    </Modal>
+    </ConfirmDialog>
   )
 }

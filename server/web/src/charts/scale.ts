@@ -1,3 +1,4 @@
+import { WEB_THEME } from '../theme'
 import { useEffect, useRef, useState } from 'react'
 
 /**
@@ -43,29 +44,29 @@ export function axisDate(time: number, spanDays: number) {
 }
 
 /** Measures the element's content width (ResizeObserver). */
-export function useWidth<T extends HTMLElement>(fallback = 600) {
+export function useWidth<T extends HTMLElement>(fallback = 600, min = 40) {
   const ref = useRef<T | null>(null)
   const [width, setWidth] = useState(fallback)
   useEffect(() => {
     const element = ref.current
     if (!element) return
-    const update = () => setWidth(Math.max(200, Math.round(element.getBoundingClientRect().width)))
+    const update = () => setWidth(Math.max(min, Math.round(element.getBoundingClientRect().width)))
     update()
     const observer = new ResizeObserver(update)
     observer.observe(element)
     return () => observer.disconnect()
-  }, [])
+  }, [min])
   return [ref, width] as const
 }
 
 /**
- * Categorical slots for players, validated (dataviz validate_palette.js,
- * dark mode, surface #111611): lightness band, chroma, adjacent CVD ΔE ≥ 8.4.
- * Assigned by a stable player order, never by rank; slots never cycle.
+ * Chart colours come from the app palette: players keep their identity colour
+ * (playerColor, FNV-1a of the id – same as in the app), semantic series use
+ * the theme tokens.
  */
-export const SERIES_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767']
-/** Players beyond the eighth slot share a neutral, dashed line. */
-export const OTHER_COLOR = '#7d8a77'
-
-export const ACCENT = '#fde100'
-export const STACK_COLORS = { loss: '#fde100', beer: '#3987e5', absence: '#d55181' } as const
+const c = WEB_THEME
+// Resolved hex values (SVG presentation attributes do not reliably take var()).
+export const ACCENT = c.accent
+export const CHART = { accent: c.accent, info: c.info, warning: c.warning, danger: c.danger, success: c.success, muted: c.muted, subtle: c.subtle }
+export const STACK_COLORS = { loss: c.accent, beer: c.info, absence: c.warning } as const
+export const CASH_COLORS = { cash: c.accent, withdrawn: c.info, open: c.danger } as const
