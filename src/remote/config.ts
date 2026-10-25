@@ -6,6 +6,7 @@ import { DEFAULT_REMOTE_SERVER } from '@/remote/protocol'
 
 const CONFIG_KEY = 'schockboard.remote.config'
 const FINGERPRINT_KEY = 'schockboard.remote.uploaded'
+const LINK_KEY = 'schockboard.round.host'
 const ENROLL_ATTEMPT_KEY = 'schockboard.remote.enroll-attempt'
 
 export type RemoteConfig = { server: string; token: string; pairedAt: string }
@@ -17,10 +18,12 @@ export function getRemoteServer() {
 
 export function getDeviceName() {
   const name = Constants.deviceName?.trim()
-  return (name || `${Platform.OS === 'android' ? 'Android' : Platform.OS}-Gerät`).slice(0, 80)
+  return `Next · ${name || `${Platform.OS === 'android' ? 'Android' : Platform.OS}-Gerät`}`.slice(0, 80)
 }
 
 export const RemoteConfigStore = {
+  getLinkedHost() { return SecureStore.getItemAsync(LINK_KEY) },
+  setLinkedHost(host: string | null) { return host ? SecureStore.setItemAsync(LINK_KEY, host) : SecureStore.deleteItemAsync(LINK_KEY) },
   async get(): Promise<RemoteConfig | null> {
     const raw = await SecureStore.getItemAsync(CONFIG_KEY)
     if (!raw) return null
@@ -40,6 +43,7 @@ export const RemoteConfigStore = {
     await SecureStore.deleteItemAsync(CONFIG_KEY)
     await SecureStore.deleteItemAsync(FINGERPRINT_KEY)
   },
+  clearUploadedFingerprint() { return SecureStore.deleteItemAsync(FINGERPRINT_KEY) },
   getUploadedFingerprint() {
     return SecureStore.getItemAsync(FINGERPRINT_KEY)
   },

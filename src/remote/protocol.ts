@@ -28,6 +28,8 @@ const id = z.string().min(1).max(80)
 const cents = z.number().int().min(-1_000_000).max(1_000_000)
 
 export const commandSchemas = {
+  'loss.record': z.object({ sessionId: id, playerId: id, note: z.string().trim().max(200).nullable().optional() }),
+  'beerround.record': z.object({ sessionId: id, playerId: id, amountCents: cents.refine(value => value > 0), note: z.string().trim().max(200).nullable().optional() }),
   'correction.record': z.object({
     playerId: id,
     amountCents: cents.refine((value) => value !== 0, 'Betrag darf nicht 0 sein.'),
@@ -52,6 +54,9 @@ export const commandSchemas = {
     defaultStakeCents: z.number().int().min(0).max(100_000),
     cashboxLabel: z.string().trim().min(1).max(60),
     absencePenaltyMode: z.enum(['none', 'full_average', 'split_absent']),
+    hapticsEnabled: z.boolean().optional(),
+    achievementAnimations: z.boolean().optional(),
+    autoBackup: z.boolean().optional(),
   }),
   /** Removes a booked loss or beer round of an evening that is still open. */
   'loss.void': z.object({

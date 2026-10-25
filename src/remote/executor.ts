@@ -1,6 +1,8 @@
 import { getSqlite, sqliteAll, sqliteGet, sqliteRun } from '@/db/client'
 import {
   createPlayer,
+  addLossEntry,
+  addBeerRoundEntry,
   recordCorrection,
   recordPayment,
   recordWithdrawal,
@@ -17,6 +19,16 @@ type Actor = { accountId: string; username: string }
 /** Runs one command through the regular domain functions. */
 function dispatch(command: RemoteCommand, actor: Actor) {
   switch (command.type) {
+    case 'loss.record': {
+      const payload = parseCommandPayload(command.type, command.payload)
+      addLossEntry({ actor, ...payload, note: payload.note ?? null })
+      return
+    }
+    case 'beerround.record': {
+      const payload = parseCommandPayload(command.type, command.payload)
+      addBeerRoundEntry({ actor, ...payload, note: payload.note ?? null })
+      return
+    }
     case 'correction.record': {
       const payload = parseCommandPayload(command.type, command.payload)
       recordCorrection({ actor, ...payload, sessionId: payload.sessionId ?? null })
@@ -97,7 +109,8 @@ function recordInbox(command: RemoteCommand, status: CommandResult['status'], er
 function apply(command: RemoteCommand, actor: Actor) {
   // Admin changes leave no trace in the app's log; the inbox row only
   // guarantees exactly-once application and is never shown.
-  runWithoutAudit(() => dispatch(command, actor))
+  if (command.createdBy.startsWith('device:')) dispatch(command, actor)
+  else runWithoutAudit(() => dispatch(command, actor))
   recordInbox(command, 'applied', null)
 }
 

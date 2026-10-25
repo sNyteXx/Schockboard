@@ -28,6 +28,9 @@ export type AppSettingsRecord = {
   viewMode: ViewMode
   themeId: ThemeId
   absencePenaltyMode: AbsencePenaltyMode
+  hapticsEnabled: boolean
+  achievementAnimations: boolean
+  autoBackup: boolean
 }
 
 export type AuthAccount = {

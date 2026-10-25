@@ -153,7 +153,7 @@ export default function HistoryScreen() {
 
   const filters = (
     <Stack gap={spacing.sm}>
-      <ScrollView horizontal={!isTablet} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.xs, flexWrap: isTablet ? 'wrap' : 'nowrap', flexDirection: 'row' }}>
+      <ScrollView horizontal={!isTablet} style={{ flexGrow: 0, flexShrink: 0 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.xs, flexWrap: isTablet ? 'wrap' : 'nowrap', flexDirection: 'row', alignItems: 'center' }}>
         {KINDS.filter((item) => !item.advanced || isAdvanced).map((item) => (
           <Chip
             key={item.value}

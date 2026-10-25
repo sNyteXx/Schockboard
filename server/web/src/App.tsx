@@ -1,3 +1,5 @@
+import { WebTableLock } from './table-lock'
+import { AchievementsPage } from './pages/Achievements'
 import { useEffect, useState } from 'react'
 
 import { formatCurrency } from '@/domain/format'
@@ -20,6 +22,7 @@ const NAV: Array<{ to: string; label: string; icon: IconName; badge?: 'pending' 
   { to: '/', label: 'Kommandozentrale', icon: 'grid' },
   { to: '/spieler', label: 'Spieler', icon: 'people' },
   { to: '/abende', label: 'Abende', icon: 'calendar' },
+  { to: '/erfolge', label: 'Erfolge & Rückblick', icon: 'star' },
   { to: '/historie', label: 'Historie', icon: 'time' },
   { to: '/buchen', label: 'Buchen', icon: 'cash' },
   { to: '/auftraege', label: 'Aufträge', icon: 'layers', badge: 'pending' },
@@ -37,6 +40,7 @@ function Route({ path }: { path: string }) {
   switch (path) {
     case '/':
       return <DashboardPage />
+    case '/erfolge': return <AchievementsPage />
     case '/spieler':
       return <PlayersPage />
     case '/abende':
@@ -174,11 +178,9 @@ function Shell() {
       </a>
       <aside className="sidebar" aria-label="Hauptnavigation">
         <div className="brand">
-          <span className="brand-mark" aria-hidden>
-            S
-          </span>
+          <img src="/next-icon.png" alt="" width={48} height={48} />
           <span className="brand-text">
-            <span className="brand-title">Schockboard</span>
+            <span className="brand-title">Schockboard Next</span>
             <span className="brand-sub">Kommandozentrale</span>
           </span>
         </div>
@@ -217,14 +219,13 @@ function Shell() {
         <header className="topbar">
           <IconButton icon="menu" label="Menü" className="menu-button" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)} />
           <button type="button" className="topbar-title" onClick={() => navigate('/')} aria-label="Zur Kommandozentrale">
-            <span className="brand-mark sm" aria-hidden>
-              S
-            </span>
+            <img src="/next-icon.png" alt="" width={32} height={32} />
             <span>{current?.label ?? 'Schockboard'}</span>
           </button>
           <SearchButton />
           <QuickButtons />
           <DeviceSwitcher />
+          <WebTableLock />
         </header>
         <StatusStrip />
         <main className="main" id="main" tabIndex={-1}>

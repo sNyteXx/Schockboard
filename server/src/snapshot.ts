@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -152,8 +153,24 @@ export function createSnapshotManager(dataDir: string) {
     return openWork(deviceId, work)
   }
 
+  const backupsDir = (deviceId: string) => { assertDeviceId(deviceId); return path.join(dataDir, 'backups', deviceId) }
+  const backupPattern = /^\d{17}-[a-f0-9]{16}\.sqlite$/
+  function listBackups(deviceId: string) {
+    const directory = backupsDir(deviceId)
+    if (!fs.existsSync(directory)) return []
+    return fs.readdirSync(directory).filter(name => backupPattern.test(name)).sort().reverse().map(name => {
+      const info = fs.statSync(path.join(directory, name))
+      return { name, size: info.size, at: info.mtime.toISOString() }
+    })
+  }
+
   return {
     dir,
+    listBackups,
+    backupFile(deviceId: string, name: string) {
+      if (!backupPattern.test(name)) throw new Error('Ungültiger Sicherungsname.')
+      return path.join(backupsDir(deviceId), name)
+    },
     rawFile,
     workFile,
 
@@ -193,6 +210,24 @@ export function createSnapshotManager(dataDir: string) {
         writeFileAtomic(candidate, workBytes)
         const info = inspectDatabase(candidate)
 
+        const incoming = new DatabaseSync(candidate, { readOnly: true })
+        let shouldBackup = false
+        try {
+          const columns = incoming.prepare('PRAGMA table_info(app_settings)').all() as Array<{ name: string }>
+          const enabled = !columns.some(row => row.name === 'auto_backup') || Boolean((incoming.prepare("SELECT auto_backup FROM app_settings WHERE id = 'app'").get() as { auto_backup: number } | undefined)?.auto_backup)
+          const closed = incoming.prepare("SELECT id FROM sessions WHERE status = 'closed'").all() as Array<{ id: string }>
+          const previous = open(deviceId)
+          const known = new Set(previous?.adapter.getAllSync<{ id: string }>("SELECT id FROM sessions WHERE status = 'closed'").map(row => row.id) ?? [])
+          shouldBackup = enabled && closed.some(row => !known.has(row.id))
+        } finally { incoming.close() }
+        if (shouldBackup) {
+          const directory = backupsDir(deviceId)
+          fs.mkdirSync(directory, { recursive: true })
+          const digest = createHash('sha256').update(workBytes).digest('hex').slice(0, 16)
+          const name = `${new Date().toISOString().replace(/[^0-9]/g, '')}-${digest}.sqlite`
+          writeFileAtomic(path.join(directory, name), workBytes)
+          listBackups(deviceId).slice(10).forEach(backup => fs.unlinkSync(path.join(directory, backup.name)))
+        }
         writeFileAtomic(rawFile(deviceId), bytes)
         closeCached(deviceId)
         removeQuietly(workFile(deviceId))
@@ -209,6 +244,7 @@ export function createSnapshotManager(dataDir: string) {
       closeCached(deviceId)
       removeQuietly(rawFile(deviceId))
       removeQuietly(workFile(deviceId))
+      fs.rmSync(backupsDir(deviceId), { recursive: true, force: true })
     },
 
     /**

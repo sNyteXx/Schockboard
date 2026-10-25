@@ -1,5 +1,5 @@
 import * as DocumentPicker from 'expo-document-picker'
-import { File, Paths } from 'expo-file-system'
+import { Directory, File, Paths } from 'expo-file-system'
 import * as Sharing from 'expo-sharing'
 import { backupDatabaseSync, deserializeDatabaseSync } from 'expo-sqlite'
 
@@ -73,7 +73,50 @@ function copyInto(source: Uint8Array) {
   ensureDatabaseReady() // forward-only migration to the current schema
 }
 
+const backupDirectory = () => new Directory(Paths.document, 'backups')
+const backupName = /^[a-z0-9-]+\.sqlite$/i
+
 export const BackupService = {
+  validate: validateContent,
+  saveLocal(reason: 'evening' | 'before-restore' | 'before-transfer') {
+    ensureDatabaseReady()
+    const directory = backupDirectory()
+    directory.create({ idempotent: true, intermediates: true })
+    const name = `${reason}-${new Date().toISOString().replace(/[^0-9]/g, '')}.sqlite`
+    const file = new File(directory, name)
+    const bytes = withRollbackJournalHeader(getSqlite().serializeSync())
+    file.write(bytes)
+    validateContent(file.bytesSync())
+    // Keep the latest ten automatic states; safety copies survive until explicitly removed.
+    if (reason === 'evening') {
+      const automatic = directory.list().filter(entry => entry instanceof File && entry.name.startsWith('evening-')).sort((a, b) => b.name.localeCompare(a.name))
+      automatic.slice(10).forEach(entry => entry.delete())
+    }
+    return name
+  },
+  listLocal() {
+    const directory = backupDirectory()
+    if (!directory.exists) return []
+    return directory.list().filter((entry): entry is File => entry instanceof File && backupName.test(entry.name))
+      .sort((a, b) => (b.modificationTime ?? 0) - (a.modificationTime ?? 0))
+      .map(file => ({ name: file.name, size: file.size, at: new Date(file.modificationTime ?? 0).toISOString() }))
+  },
+  readLocal(name: string) {
+    if (!backupName.test(name)) throw new Error('Ungültige Sicherung.')
+    const bytes = new File(backupDirectory(), name).bytesSync()
+    validateContent(bytes)
+    return bytes
+  },
+  async shareLocal(name: string) {
+    this.readLocal(name)
+    if (!(await Sharing.isAvailableAsync())) throw new Error('Teilen nicht verfügbar.')
+    await Sharing.shareAsync(new File(backupDirectory(), name).uri, { mimeType: 'application/x-sqlite3' })
+  },
+  restoreLocal(name: string) {
+    const bytes = this.readLocal(name)
+    this.saveLocal('before-restore')
+    this.restoreValidatedBackup(bytes)
+  },
   async shareBackup() {
     ensureDatabaseReady()
     if (!(await Sharing.isAvailableAsync())) throw new Error('Teilen ist auf diesem Gerät nicht verfügbar.')

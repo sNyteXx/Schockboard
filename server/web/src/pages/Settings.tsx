@@ -16,10 +16,12 @@ const MODES: Array<{ value: AppSettingsRecord['absencePenaltyMode']; label: stri
 ]
 
 export function SettingsPage() {
-  const { pending } = useApp()
+  const { pending, device, status } = useApp()
+  const supportsNext = (status?.schemaVersion ?? 0) >= 10
+  const backups = useApi<Array<{ name: string; size: number; at: string }>>('/backups')
   const settings = useApi<AppSettingsRecord>('/settings')
   const { run, busy } = useQueue()
-  const [form, setForm] = useState({ stake: '', label: '', mode: 'full_average' as AppSettingsRecord['absencePenaltyMode'] })
+  const [form, setForm] = useState({ stake: '', label: '', mode: 'full_average' as AppSettingsRecord['absencePenaltyMode'], hapticsEnabled: true, achievementAnimations: true, autoBackup: true })
   const [error, setError] = useState<string | null>(null)
   const pendingSettings = pending.filter((command) => command.type === 'settings.update')
 
@@ -29,6 +31,7 @@ export function SettingsPage() {
         stake: (settings.data.defaultStakeCents / 100).toFixed(2).replace('.', ','),
         label: settings.data.cashboxLabel,
         mode: settings.data.absencePenaltyMode,
+        hapticsEnabled: settings.data.hapticsEnabled, achievementAnimations: settings.data.achievementAnimations, autoBackup: settings.data.autoBackup,
       })
     }
   }, [settings.data])
@@ -43,7 +46,7 @@ export function SettingsPage() {
       setError((problem as Error).message)
       return
     }
-    await run('settings.update', { defaultStakeCents, cashboxLabel: form.label.trim(), absencePenaltyMode: form.mode }, 'Einstellungen beauftragt.')
+    await run('settings.update', { defaultStakeCents, cashboxLabel: form.label.trim(), absencePenaltyMode: form.mode, ...(supportsNext ? { hapticsEnabled: form.hapticsEnabled, achievementAnimations: form.achievementAnimations, autoBackup: form.autoBackup } : {}) }, 'Einstellungen beauftragt.')
   }
 
   return (
@@ -88,6 +91,8 @@ export function SettingsPage() {
                   ))}
                 </div>
               </fieldset>
+              {([['hapticsEnabled', 'Vibration auf dem Gerät'], ['achievementAnimations', 'Erfolgsanimationen auf dem Gerät'], ['autoBackup', 'Automatische Sicherung beim Abendabschluss']] as const).map(([key, label]) => <label key={key} className="check-row"><input type="checkbox" disabled={!supportsNext} checked={form[key]} onChange={event => setForm({ ...form, [key]: event.target.checked })} />{label}</label>)}
+              {!supportsNext ? <Notice>Vibration, Erfolgsanimationen und automatische Sicherungen benötigen Schockboard Next.</Notice> : null}
               {error ? <Notice tone="danger">{error}</Notice> : null}
               <div className="form-actions">
                 <Button type="submit" variant="primary" icon="check" disabled={busy || !form.label.trim() || !form.stake}>
@@ -121,6 +126,12 @@ export function SettingsPage() {
           </Card>
         </div>
       ) : null}
+      <Card title="Sicherungen" icon="shield">
+        <p>Die letzten zehn automatisch empfangenen Abendabschlüsse bleiben erhalten. Zum Wiederherstellen die Datei herunterladen und in der App unter Setup → Sicherung wiederherstellen auswählen. Der aktuelle Stand wird dort vorher gesichert.</p>
+        <a className="btn btn-secondary" href={`/api/admin/backup/latest?device=${encodeURIComponent(device ?? '')}`} download>Aktuellen Datenstand herunterladen</a>
+        {(backups.data ?? []).map(backup => <div className="list-row" key={backup.name}><span>{new Date(backup.at).toLocaleString('de-DE')} · {(backup.size / 1024).toFixed(0)} KB</span><a className="btn btn-ghost btn-sm" href={`/api/admin/backup/${backup.name}?device=${encodeURIComponent(device ?? '')}`} download>Herunterladen</a></div>)}
+        {backups.error ? <Notice tone="danger">{backups.error.message}</Notice> : null}
+      </Card>
       <SyncHint />
     </Page>
   )

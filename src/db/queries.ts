@@ -1,3 +1,4 @@
+import { assertWritable } from '@/domain/write-access'
 import { calculateAbsenceChargeCents, getVoidedLossCorrectionCents, sortDebtors } from '@/domain/ledger'
 import { SCHOCK_RULE_PROFILE } from '@/domain/rules'
 import type {
@@ -156,8 +157,11 @@ export function getAppSettings(): AppSettingsRecord {
     view_mode: string
     theme_id: string
     absence_penalty_mode: string
+    haptics_enabled: number
+    achievement_animations: number
+    auto_backup: number
   }>(
-    "SELECT default_stake_cents, currency, cashbox_label, rule_profile_json, view_mode, theme_id, absence_penalty_mode FROM app_settings WHERE id = 'app'"
+    "SELECT default_stake_cents, currency, cashbox_label, rule_profile_json, view_mode, theme_id, absence_penalty_mode, haptics_enabled, achievement_animations, auto_backup FROM app_settings WHERE id = 'app'"
   )
 
   if (!row) {
@@ -169,6 +173,7 @@ export function getAppSettings(): AppSettingsRecord {
       viewMode: 'basic',
       themeId: 'bvb09',
       absencePenaltyMode: 'full_average',
+      hapticsEnabled: true, achievementAnimations: true, autoBackup: true,
     }
   }
 
@@ -179,6 +184,9 @@ export function getAppSettings(): AppSettingsRecord {
     ruleProfile: JSON.parse(row.rule_profile_json),
     viewMode: (row.view_mode as ViewMode) ?? 'basic',
     themeId: (row.theme_id as ThemeId) ?? 'bvb09',
+    hapticsEnabled: Boolean(row.haptics_enabled),
+    achievementAnimations: Boolean(row.achievement_animations),
+    autoBackup: Boolean(row.auto_backup),
     absencePenaltyMode: (row.absence_penalty_mode as AbsencePenaltyMode) ?? 'full_average',
   }
 }
@@ -189,7 +197,11 @@ export function updateAppSettings(input: {
   cashboxLabel: string
   absencePenaltyMode: AbsencePenaltyMode
   viewMode?: ViewMode
+  hapticsEnabled?: boolean
+  achievementAnimations?: boolean
+  autoBackup?: boolean
 }) {
+  assertWritable()
   const sets = [
     'default_stake_cents = $defaultStakeCents',
     'cashbox_label = $cashboxLabel',
@@ -201,6 +213,14 @@ export function updateAppSettings(input: {
     $cashboxLabel: input.cashboxLabel,
     $absencePenaltyMode: input.absencePenaltyMode,
     $updatedAt: nowIso(),
+  }
+
+  for (const [key, column] of [['hapticsEnabled', 'haptics_enabled'], ['achievementAnimations', 'achievement_animations'], ['autoBackup', 'auto_backup']] as const) {
+    if (input[key] !== undefined) {
+      if (typeof input[key] !== 'boolean') throw new Error('Ungültige Einstellung.')
+      sets.push(`${column} = $${key}`)
+      params[`$${key}`] = input[key] ? 1 : 0
+    }
   }
 
   if (input.viewMode) {
@@ -225,6 +245,7 @@ export function updateAppSettings(input: {
 }
 
 export function updateViewMode(input: { actor: Actor; viewMode: ViewMode }) {
+  assertWritable()
   sqliteRun(
     `UPDATE app_settings SET view_mode = $viewMode, updated_at = $updatedAt WHERE id = 'app'`,
     {
@@ -235,6 +256,7 @@ export function updateViewMode(input: { actor: Actor; viewMode: ViewMode }) {
 }
 
 export function updateTheme(input: { actor: Actor; themeId: ThemeId }) {
+  assertWritable()
   sqliteRun(
     `UPDATE app_settings SET theme_id = $themeId, updated_at = $updatedAt WHERE id = 'app'`,
     {
@@ -291,6 +313,7 @@ function addToSession(sessionId: string, playerId: string) {
 }
 
 export function createPlayer(input: { name: string; isCore: boolean; actor: Actor }) {
+  assertWritable()
   ensureDatabaseReady()
   const name = input.name.trim()
   if (!name) throw new Error('Bitte einen Namen eingeben.')
@@ -338,6 +361,7 @@ export function updatePlayerFlags(input: {
   isCore?: boolean
   isArchived?: boolean
 }) {
+  assertWritable()
   const existing = sqliteGet<{
     is_core: number
     is_archived: number
@@ -400,6 +424,7 @@ export function updatePlayerFlags(input: {
 }
 
 export function deletePlayer(input: { actor: Actor; playerId: string }) {
+  assertWritable()
   const existing = sqliteGet<{ name: string }>(
     'SELECT name FROM players WHERE id = $playerId LIMIT 1',
     { $playerId: input.playerId }
@@ -813,6 +838,7 @@ export function createSession(input: {
   notes: string | null
   stakeCents: number
 }) {
+  assertWritable()
   const openSession = getOpenSessionOverview()
 
   if (openSession) {
@@ -1032,6 +1058,7 @@ export function getSessionDetail(sessionId: string): SessionDetail | null {
 }
 
 export function toggleAttendance(input: { actor: Actor; sessionId: string; playerId: string }) {
+  assertWritable()
   const row = sqliteGet<{ id: string; present: number }>(
     `
       SELECT id, present
@@ -1102,6 +1129,7 @@ export function toggleAttendance(input: { actor: Actor; sessionId: string; playe
 }
 
 export function addGuestToSession(input: { actor: Actor; sessionId: string; name: string }) {
+  assertWritable()
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     {
@@ -1153,6 +1181,7 @@ export function addGuestToSession(input: { actor: Actor; sessionId: string; name
 }
 
 export function updateSessionStake(input: { actor: Actor; sessionId: string; stakeCents: number }) {
+  assertWritable()
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     {
@@ -1196,6 +1225,7 @@ export function addLossEntry(input: {
   playerId: string
   note: string | null
 }) {
+  assertWritable()
   const session = sqliteGet<{ status: string; stake_cents: number }>(
     'SELECT status, stake_cents FROM sessions WHERE id = $sessionId',
     {
@@ -1264,6 +1294,7 @@ export function addBeerRoundEntry(input: {
   amountCents: number
   note: string | null
 }) {
+  assertWritable()
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     {
@@ -1327,11 +1358,13 @@ export function addBeerRoundEntry(input: {
 }
 
 export function deleteLastLoss(input: { actor: Actor; sessionId: string; playerId: string; entryId?: string }) {
+  assertWritable()
   getSqlite().withTransactionSync(() => deleteLastLossUnsafe(input))
 }
 
 /** Same as deleteLastLoss, for callers that already hold a transaction. */
 export function deleteLastLossUnsafe(input: { actor: Actor; sessionId: string; playerId: string; entryId?: string }) {
+  assertWritable()
   const session = sqliteGet<{ status: string }>(
     'SELECT status FROM sessions WHERE id = $sessionId',
     { $sessionId: input.sessionId }
@@ -1418,6 +1451,7 @@ export function deleteLastLossUnsafe(input: { actor: Actor; sessionId: string; p
  * lose the link.
  */
 export function cancelSession(input: { actor: Actor; sessionId: string }) {
+  assertWritable()
   getSqlite().withTransactionSync(() => {
     const session = sqliteGet<{ status: string; title: string }>('SELECT status, title FROM sessions WHERE id = $id', {
       $id: input.sessionId,
@@ -1441,6 +1475,7 @@ export function cancelSession(input: { actor: Actor; sessionId: string }) {
 }
 
 export function closeSession(input: { actor: Actor; sessionId: string }) {
+  assertWritable()
   // Reads and writes share one transaction so a second close can never see a
   // stale 'open' status and assess absence charges twice.
   let result!: ReturnType<typeof closeSessionUnsafe>
@@ -1634,6 +1669,7 @@ function closeSessionUnsafe(input: { actor: Actor; sessionId: string }) {
 
 /** Takes money out of the cashbox (e.g. "Kasten Bier"); player balances stay as they are. */
 export function recordWithdrawal(input: { actor: Actor; amountCents: number; note: string; sessionId?: string | null }) {
+  assertWritable()
   const note = input.note.trim()
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new Error('Bitte einen Betrag größer 0 eingeben.')
   if (!note) throw new Error('Bitte angeben, wofür das Geld entnommen wird.')
@@ -1675,6 +1711,7 @@ export function recordPayment(input: {
   note: string | null
   sessionId?: string | null
 }) {
+  assertWritable()
   const paymentId = createId('payment')
 
   sqliteRun(
@@ -1714,6 +1751,7 @@ export function recordCorrection(input: {
   reason: string
   sessionId?: string | null
 }) {
+  assertWritable()
   const correctionId = createId('correction')
 
   sqliteRun(

@@ -4,7 +4,8 @@ vi.mock('expo-crypto', async () => (await import('./support/memory-sqlite')).cry
 vi.mock('@/db/client', async () => (await import('./support/memory-sqlite')).clientMock)
 
 import { ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
-import { addLossEntry, closeSession, createPlayer, createSession, getDebtSummaries, listPlayers } from '@/db/queries'
+import { addLossEntry, closeSession, createPlayer, createSession, getAppSettings, getDebtSummaries, getSessionDetail, listPlayers } from '@/db/queries'
+import { setHandoffLocked } from '@/domain/write-access'
 import { applyRemoteCommands, getUnreportedResults, markResultsReported } from '@/remote/executor'
 import type { RemoteCommand } from '@/remote/protocol'
 import { createMemoryDatabase, memory } from './support/memory-sqlite'
@@ -16,6 +17,7 @@ function command(id: string, type: RemoteCommand['type'], payload: Record<string
 }
 
 beforeEach(() => {
+  setHandoffLocked(false)
   memory.current = createMemoryDatabase()
   resetBootstrapFlag()
   ensureDatabaseReady()
@@ -25,6 +27,28 @@ beforeEach(() => {
 })
 
 describe('remote command executor', () => {
+  it('applies shared-round losses and beer exactly once and refuses bookings after close', () => {
+    const playerId = createPlayer({ actor, name: 'Anna', isCore: true })
+    const sessionId = createSession({ actor, title: 'Runde', notes: null, stakeCents: 100 })
+    const commands = [command('loss', 'loss.record', { playerId, sessionId }), command('beer', 'beerround.record', { playerId, sessionId, amountCents: 600 })].map(c => ({ ...c, createdBy: 'device:handy' }))
+    expect(applyRemoteCommands(commands, actor)).toBe(2)
+    expect(applyRemoteCommands(commands, actor)).toBe(0)
+    expect(getSessionDetail(sessionId)!.losses).toHaveLength(2)
+    expect(getDebtSummaries()[0].openDebtCents).toBe(700)
+    closeSession({ actor, sessionId })
+    expect(applyRemoteCommands([{ ...commands[0], id: 'too-late' }], actor)).toBe(0)
+    expect(getUnreportedResults().find(row => row.id === 'too-late')?.status).toBe('rejected')
+  })
+
+  it('persists preferences and blocks writes while a device transfer is frozen', () => {
+    expect(applyRemoteCommands([command('prefs', 'settings.update', { defaultStakeCents: 100, cashboxLabel: 'Kasse', absencePenaltyMode: 'none', hapticsEnabled: false, achievementAnimations: false, autoBackup: false })], actor)).toBe(1)
+    expect(getAppSettings()).toMatchObject({ hapticsEnabled: false, achievementAnimations: false, autoBackup: false })
+    setHandoffLocked(true)
+    expect(() => createPlayer({ actor, name: 'Blocked', isCore: false })).toThrow()
+    setHandoffLocked(false)
+    expect(listPlayers()).toEqual([])
+  })
+
   it('applies a correction exactly once, even if the server sends it again', () => {
     const playerId = createPlayer({ actor, name: 'Anna', isCore: true })
     const correction = command('cmd_1', 'correction.record', { playerId, amountCents: -250, reason: 'Kasse gezählt' })

@@ -5,7 +5,7 @@ import { syncBackgroundRegistration } from '@/remote/background'
 import { SyncEngine } from '@/remote/sync-engine'
 
 const CHANGE_DEBOUNCE_MS = 3_000
-const FOREGROUND_INTERVAL_MS = 60_000
+const FOREGROUND_INTERVAL_MS = 5_000
 
 /**
  * Invisible sync: after local changes, when the app comes to the foreground,

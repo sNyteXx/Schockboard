@@ -153,13 +153,12 @@ const useStyles = themedStyles(({ c, t, sizeClass }) => {
     listDetail: { ...t.caption, color: c.muted },
     listValue: { ...t.numericSm, color: c.text },
     divider: { height: 1, backgroundColor: c.border },
-    kpi: { gap: spacing.xs, flex: 1, minWidth: 0 },
     kpiTop: { flexDirection: "row", alignItems: "center", gap: spacing.xs },
     kpiIcon: { width: 28, height: 28, borderRadius: radius.sm, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSoft },
     kpiLabel: { ...t.overline, color: c.muted, flex: 1 },
     kpiValue: { ...t.display, color: c.text },
     kpiHint: { ...t.caption, color: c.muted },
-    stat: { flex: 1, minWidth: 0, gap: 4, padding: spacing.sm, borderRadius: radius.md, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border },
+    stat: { flexGrow: 1, minWidth: 0, gap: 4, padding: spacing.sm, borderRadius: radius.md, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border },
     statLabel: { ...t.overline, color: c.subtle },
     statValue: { ...t.numeric, color: c.text },
     statHint: { ...t.caption, color: c.muted },
@@ -236,7 +235,7 @@ export function Screen({
           <TourScrollContext.Provider value={scroller}>{children}</TourScrollContext.Provider>
         </ScrollView>
       ) : (
-        <View style={[styles.scroll, content, { flex: 1, minHeight: 0, paddingBottom: isTablet ? spacing.lg : spacing.xxl }]}>{children}</View>
+        <View style={[styles.scroll, content, { flex: 1, minHeight: 0, paddingBottom: isTablet ? spacing.lg + (footer ? 0 : insets.bottom) : spacing.xxl }]}>{children}</View>
       )}
       {footer ? <View style={{ paddingBottom: isTablet ? insets.bottom : 0, backgroundColor: colors.tabBar }}>{footer}</View> : null}
     </SafeAreaView>
@@ -685,7 +684,7 @@ export function KpiTile({
 }) {
   const styles = useStyles();
   return (
-    <Card tone={tone === "hero" ? "hero" : "default"} style={{ flex: 1, gap: spacing.xs }}>
+    <Card tone={tone === "hero" ? "hero" : "default"} style={{ flexGrow: 1, gap: spacing.xs }}>
       <View style={styles.kpiTop}>
         {icon ? (
           <View style={[styles.kpiIcon, tone === "hero" && { backgroundColor: colors.accentSoft }]}>

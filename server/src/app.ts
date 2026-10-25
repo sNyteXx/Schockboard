@@ -6,6 +6,7 @@ import { Hono } from 'hono'
 import { secureHeaders } from 'hono/secure-headers'
 import type { JWTVerifyGetKey } from 'jose'
 
+import { initializeConnections } from './connections'
 import { createAdminAuth, type AppEnv } from './auth'
 import type { ServerConfig } from './config'
 import { adminRoutes } from './routes/admin'
@@ -25,6 +26,7 @@ export type AppDeps = {
 
 export function createApp(deps: AppDeps) {
   const { config, store, snapshots } = deps
+  initializeConnections(store)
   const log = deps.log ?? ((message: string) => console.log(message))
   const app = new Hono<AppEnv>()
 

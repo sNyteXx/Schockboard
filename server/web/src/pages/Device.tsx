@@ -1,3 +1,4 @@
+import { ConnectionsPanel } from './Connections'
 import { useState, type FormEvent } from 'react'
 
 import { formatDateTime } from '@/domain/format'
@@ -41,7 +42,7 @@ export function DevicePage() {
     <Page
       title="Geräte"
       icon="tablet"
-      context={`${activeDevices.length} von höchstens ${status?.maxDevices ?? '–'} aktiv · jedes Gerät ist eine eigene Kasse`}
+      context={`${activeDevices.length} von höchstens ${status?.maxDevices ?? '–'} aktiv · eigenständige und gekoppelte Geräte`}
       actions={
         isAdmin && activeDevices.length > 1 ? (
           <Button variant="secondary" size="sm" icon="swap" onClick={() => setDialog({ kind: 'replace' })}>
@@ -51,6 +52,7 @@ export function DevicePage() {
       }
     >
       <div className="dash">
+        {isAdmin ? <ConnectionsPanel /> : null}
         <Card className="span-8" icon="tablet" title="Aktive Geräte">
           {activeDevices.length === 0 ? (
             <EmptyState icon="tablet" title="Noch kein Gerät verbunden" text="Die App meldet sich beim ersten Start automatisch an." />

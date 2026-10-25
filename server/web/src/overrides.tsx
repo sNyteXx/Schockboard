@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useRef, useState, type FormEvent, type ReactNode } from 'react'
 
 import { formatCurrency, formatDate } from '@/domain/format'
 import { parseEuroToCents, parseSignedEuroToCents } from '@/domain/utils'
@@ -33,7 +33,10 @@ export function OverrideNotice({ compact = false }: { compact?: boolean }) {
 export function useQueue() {
   const { refresh, toast } = useApp()
   const [busy, setBusy] = useState(false)
+  const running = useRef(false)
   async function run(type: CommandType, payload: Record<string, unknown>, message: string) {
+    if (running.current) return false
+    running.current = true
     setBusy(true)
     try {
       await queueCommand(type, payload)
@@ -44,6 +47,7 @@ export function useQueue() {
       toast(error instanceof ApiError || error instanceof Error ? error.message : 'Fehler beim Speichern.', 'error')
       return false
     } finally {
+      running.current = false
       setBusy(false)
     }
   }

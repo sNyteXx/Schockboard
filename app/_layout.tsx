@@ -12,6 +12,7 @@ import { StatusBar } from "expo-status-bar";
 import { ActivityIndicator, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
+import { TableLock } from '@/components/table-lock';
 import { DialogHost } from "@/components/dialog";
 import { RuntimeProvider, useRuntime } from "@/providers/runtime-provider";
 import { colors } from "@/theme/tokens";
@@ -52,6 +53,7 @@ export default function RootLayout() {
           <RootNavigation />
           {/* In-app replacement for Android's system dialogs (see components/dialog). */}
           <DialogHost />
+          <TableLock />
         </RuntimeProvider>
       ) : (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>

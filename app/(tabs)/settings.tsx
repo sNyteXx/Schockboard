@@ -1,5 +1,7 @@
+import { assertWritable } from '@/domain/write-access';
+import { RemoteConfigStore } from '@/remote/config';
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { View } from "react-native";
+import { View, Switch } from "react-native";
 
 import { Alert } from "@/components/dialog";
 import { useEffect, useState } from "react";
@@ -90,6 +92,8 @@ export default function SettingsScreen() {
   const [cashboxLabel, setCashboxLabel] = useState("Getränkekasse");
   const [absencePenaltyMode, setAbsencePenaltyMode] = useState<AbsencePenaltyMode>("full_average");
   const [newPlayer, setNewPlayer] = useState("");
+  const [preferences, setPreferences] = useState({ hapticsEnabled: true, achievementAnimations: true, autoBackup: true });
+  const [backups, setBackups] = useState(() => BackupService.listLocal());
   const [backupBusy, setBackupBusy] = useState(false);
 
   useEffect(() => {
@@ -97,6 +101,8 @@ export default function SettingsScreen() {
       return;
     }
 
+    setBackups(BackupService.listLocal());
+    setPreferences({ hapticsEnabled: data.data.settings.hapticsEnabled, achievementAnimations: data.data.settings.achievementAnimations, autoBackup: data.data.settings.autoBackup });
     setDefaultStake((data.data.settings.defaultStakeCents / 100).toFixed(2).replace(".", ","));
     setCashboxLabel(data.data.settings.cashboxLabel);
     setAbsencePenaltyMode(data.data.settings.absencePenaltyMode);
@@ -115,6 +121,7 @@ export default function SettingsScreen() {
         defaultStakeCents: parseEuroToCents(defaultStake),
         cashboxLabel: cashboxLabel.trim(),
         absencePenaltyMode,
+        ...preferences,
       });
       Feedback.success();
       runtime.bumpDataVersion();
@@ -226,7 +233,7 @@ export default function SettingsScreen() {
       if (!backupBytes) return;
       Alert.alert(
         "Sicherung wiederherstellen?",
-        "Die aktuellen Spieler, Spielabende, Buchungen und Einstellungen werden durch die ausgewählte Sicherung ersetzt. Das kann nicht rückgängig gemacht werden. Hast du die aktuellen Daten vorher gesichert?",
+        "Spieler, Spielabende, Buchungen und Einstellungen werden durch die ausgewählte Sicherung ersetzt. Vorher wird der aktuelle Stand automatisch als Sicherheitskopie gespeichert.",
         [
           { text: "Abbrechen", style: "cancel" },
           {
@@ -236,7 +243,11 @@ export default function SettingsScreen() {
               try {
                 // A pending undo refers to entries of the database being replaced.
                 runtime.cancelUndo();
+                assertWritable();
+                BackupService.saveLocal('before-restore');
                 BackupService.restoreValidatedBackup(backupBytes);
+                await RemoteConfigStore.clearUploadedFingerprint();
+                setBackups(BackupService.listLocal());
                 await runtime.refreshAuthState();
                 runtime.bumpDataVersion();
                 runtime.setFlash({ type: "success", message: "Sicherung erfolgreich wiederhergestellt." });
@@ -296,6 +307,11 @@ export default function SettingsScreen() {
       {runtime.flash ? <Notice message={runtime.flash.message} type={runtime.flash.type} /> : null}
 
       <Card>
+        <CardHeader title="Runde & Geräte" icon="qr-code-outline" />
+        <Split><Button icon="qr-code-outline" onPress={() => router.push('/connect')}>Geräte verbinden / umziehen</Button><Button tone="secondary" icon="trophy-outline" onPress={() => router.push('/achievements')}>Erfolge & Rückblick</Button></Split>
+        <Button tone="secondary" icon="lock-closed-outline" onPress={() => runtime.setTableLocked(true)}>Tisch gegen versehentliche Eingaben sperren</Button>
+      </Card>
+      <Card>
         <CardHeader overline="Ansicht" title="Darstellung" icon="color-palette-outline" />
         <Field label="Anzeigemodus" hint={runtime.viewMode === "advanced" ? "Alle Details, Notizen, Export und Korrekturen" : "Das Wichtigste für den Spieltisch"}>
           <Segmented<ViewMode>
@@ -332,6 +348,8 @@ export default function SettingsScreen() {
             <Input value={cashboxLabel} onChangeText={setCashboxLabel} />
           </Field>
         </Split>
+        {([['hapticsEnabled', 'Vibration'], ['achievementAnimations', 'Animation bei neuen Erfolgen'], ['autoBackup', 'Beim Abendabschluss automatisch sichern']] as const).map(([key, label]) => <Split key={key}><AppText>{label}</AppText><Switch accessibilityLabel={label} value={preferences[key]} onValueChange={value => setPreferences(current => ({ ...current, [key]: value }))} /></Split>)}
+        <AppText tone="muted">Es bleiben zehn automatische Sicherungen erhalten. Sicherheitskopien vor einem Umzug oder einer Wiederherstellung bleiben zusätzlich erhalten.</AppText>
         <Divider />
         <CardHeader
           overline="Abwesenheit"
@@ -414,6 +432,15 @@ export default function SettingsScreen() {
           <Button tone="secondary" icon="cloud-upload-outline" loading={backupBusy} onPress={() => void handleShareBackup()}>Sicherung exportieren</Button>
           <Button tone="secondary" icon="cloud-download-outline" disabled={backupBusy} onPress={() => void handleRestoreBackup()}>Sicherung wiederherstellen</Button>
         </Split>
+        {backups.map(backup => <View key={backup.name} style={{ gap: spacing.xs }}>
+          <AppText>{new Date(backup.at).toLocaleString('de-DE')} · {(backup.size / 1024).toFixed(0)} KB</AppText>
+          <AppText variant="caption" tone="muted">{backup.name.startsWith('evening-') ? 'Abendabschluss' : 'Sicherheitskopie vor Datenwechsel'}</AppText>
+          <Split><Button tone="secondary" disabled={backupBusy} onPress={() => void BackupService.shareLocal(backup.name).catch(error => runtime.setFlash({ type: 'error', message: error.message }))}>Exportieren</Button>
+          <Button tone="secondary" disabled={backupBusy} onPress={() => Alert.alert('Sicherung wiederherstellen?', 'Der aktuelle Stand wird vorher gesichert und danach vollständig ersetzt.', [{ text: 'Abbrechen', style: 'cancel' }, { text: 'Wiederherstellen', style: 'destructive', onPress: async () => {
+            try { assertWritable(); runtime.cancelUndo(); BackupService.restoreLocal(backup.name); await RemoteConfigStore.clearUploadedFingerprint(); await runtime.refreshAuthState(); runtime.bumpDataVersion(); setBackups(BackupService.listLocal()); }
+            catch (error) { runtime.setFlash({ type: 'error', message: (error as Error).message }); }
+          } }])}>Wiederherstellen</Button></Split>
+        </View>)}
         <AppText variant="caption" tone="subtle">Vor Gerätewechseln oder größeren Updates eine Sicherung außerhalb der App speichern.</AppText>
       </Card>
 

@@ -172,3 +172,11 @@ automatisch umgestellt:
 3. `snapshot.sqlite` wird nach `snapshots/<aktives Gerät>.sqlite` **umbenannt** (bytegleich), `snapshot-work.sqlite` gelöscht.
 
 Das Gerät behält seinen Token und synchronisiert ohne Änderung weiter. Ein erneuter Start ändert nichts mehr (idempotent).
+
+## Next: gekoppelte Runden und Geräteumzug
+
+`/api/device/connect/*` verwendet das Gerätetoken; `/api/admin/connect/*` verlangt Administratorrechte. Alle Admin-Aufrufe wählen das Gerät per Query oder `X-Schockboard-Device`. QR-Codes enthalten einen zufälligen Einmalcode (nur SHA-256 im Server gespeichert), kein dauerhaftes Gerätetoken. Neue Funktionen setzen Schema 10 voraus; alte Apps können weiterhin die bisherigen Aufträge bearbeiten.
+
+Der Host bleibt alleiniger Schreiber. Gäste starten als Zuschauer und erhalten nur Teilnehmer, Verlustzahlen und Erfolge. Bediener sehen zusätzlich Konten und dürfen genau drei Auftragstypen anlegen. Widerruf storniert ausstehende Gäste-Aufträge. Web- und Gäste-Buchungen behalten Wiederholungskennungen auch nach Bereinigung des Auftragsverlaufs. Während eines Geräteumzugs werden Quell-Uploads und Quell-Aufträge gesperrt. Abschluss verlangt den bytegleichen Upload der gesicherten Quelldatenbank durch das Ziel. Bestehende Gäste wechseln zum Ziel, die Quelle wird Zuschauer.
+
+`GET /api/admin/achievements`, `/recap?year=2026` oder `/recap?sessionId=…` liefern die gemeinsame App-Auswertung. `includeBalances=1` aktiviert persönliche Kontostände ausdrücklich. `/backups` sowie `/backup/latest` und `/backup/:name` liefern zugriffsgeschützte Sicherungen; kein öffentlicher Dateipfad. Automatische Stände liegen in `DATA_DIR/backups/<deviceId>` (maximal zehn pro Gerät). Für eine Rücksicherung erst herunterladen und dann in der App mit Sicherheitskopie wiederherstellen.

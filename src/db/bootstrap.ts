@@ -299,6 +299,15 @@ const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 10,
+    name: 'feedback_and_backup_preferences',
+    sql: `
+      ALTER TABLE app_settings ADD COLUMN haptics_enabled INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE app_settings ADD COLUMN achievement_animations INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE app_settings ADD COLUMN auto_backup INTEGER NOT NULL DEFAULT 1;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version

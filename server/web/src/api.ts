@@ -208,8 +208,18 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T
 }
 
-export function queueCommand(type: CommandType, payload: Record<string, unknown>) {
-  return api<StoredCommand>('/commands', { method: 'POST', body: JSON.stringify({ type, payload }) })
+export async function queueCommand(type: CommandType, payload: Record<string, unknown>) {
+  const key = `schockboard.pending:${JSON.stringify({ device: selectedDevice, type, payload })}`
+  const requestId = sessionStorage.getItem(key) ?? crypto.randomUUID()
+  sessionStorage.setItem(key, requestId)
+  try {
+    const command = await api<StoredCommand>('/commands', { method: 'POST', body: JSON.stringify({ requestId, type, payload }) })
+    sessionStorage.removeItem(key)
+    return command
+  } catch (error) {
+    if (error instanceof ApiError && [400, 403, 404, 409, 422].includes(error.status)) sessionStorage.removeItem(key)
+    throw error
+  }
 }
 
 export function cancelCommand(id: string) {

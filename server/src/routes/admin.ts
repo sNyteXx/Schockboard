@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import { getRecap } from '@/db/recap'
 import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
@@ -17,6 +19,9 @@ import { formatCurrency } from '@/domain/format'
 import type { HistoryEntry } from '@/domain/types'
 import { COMMAND_TYPES, parseCommandPayload, type CommandType } from '@/remote/protocol'
 
+import { connectionRoutes, connectionState } from '../connections'
+import { getStatsRawData } from '@/db/stats-queries'
+import { buildAchievements } from '@/domain/achievements'
 import { requireAdmin, type AppEnv } from '../auth'
 import type { ServerConfig } from '../config'
 import type { SnapshotManager } from '../snapshot'
@@ -27,6 +32,7 @@ import { ENTRY_TABLES, entryKindOf, entryNotes, getCashboxChart, getEveningsChar
 const HISTORY_KINDS = ['all', 'loss', 'beerround', 'absence', 'payment', 'correction', 'withdrawal', 'audit'] as const
 
 const commandRequestSchema = z.object({
+  requestId: z.string().uuid().optional(),
   type: z.enum(COMMAND_TYPES as [CommandType, ...CommandType[]]),
   payload: z.unknown(),
 })
@@ -71,7 +77,7 @@ function cashLimitMessage(available: number) {
 }
 
 /** Plausibility checks against the latest snapshot. The device re-validates when applying. */
-function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown>, store: Store, deviceId: string) {
+export function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown>, store: Store, deviceId: string) {
   const pending = () => store.listPendingCommands(deviceId)
   const requirePlayer = (playerId: unknown) => {
     if (typeof playerId !== 'string' || !playerExists(playerId)) {
@@ -80,6 +86,14 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
   }
 
   switch (type) {
+    case 'loss.record':
+    case 'beerround.record': {
+      requirePlayer(payload.playerId)
+      if (sessionRow(String(payload.sessionId))?.status !== 'open') throw new CommandCheckError('Dieser Abend ist nicht mehr offen.')
+      const present = sqliteGet<{ present: number }>('SELECT present FROM session_attendance WHERE session_id = $session AND player_id = $player', { $session: String(payload.sessionId), $player: String(payload.playerId) })
+      if (!present?.present) throw new CommandCheckError('Spieler ist nicht anwesend.')
+      return
+    }
     case 'correction.record': {
       requirePlayer(payload.playerId)
       if (typeof payload.sessionId === 'string' && !sessionRow(payload.sessionId)) {
@@ -286,6 +300,40 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store; snapshot
   app.use('*', async (c, next) => {
     await next()
     c.header('Cache-Control', 'no-store')
+  })
+
+  app.route('/connect', connectionRoutes(deps, true))
+
+  app.get('/backups', c => {
+    const device = requireDevice(c)
+    if (device instanceof Response) return device
+    return c.json(snapshots.listBackups(device.id))
+  })
+  app.get('/backup/:name', c => {
+    const device = requireDevice(c)
+    if (device instanceof Response) return device
+    let file: string
+    try { file = c.req.param('name') === 'latest' ? snapshots.rawFile(device.id) : snapshots.backupFile(device.id, c.req.param('name')) }
+    catch { return c.json({ error: 'not_found' }, 404) }
+    if (!fs.existsSync(file)) return c.json({ error: 'not_found' }, 404)
+    c.header('Content-Type', 'application/vnd.sqlite3')
+    c.header('Content-Disposition', 'attachment; filename="schockboard-sicherung.sqlite"')
+    return c.body(new Uint8Array(fs.readFileSync(file)))
+  })
+
+  app.get('/recap', c => {
+    const device = requireDevice(c)
+    if (device instanceof Response) return device
+    const sessionId = c.req.query('sessionId'), year = c.req.query('year') ?? String(new Date().getFullYear())
+    if ((sessionId && sessionId.length > 80) || !/^\d{4}$/.test(year)) return c.json({ error: 'invalid_request' }, 400)
+    try { return c.json(snapshots.withDevice(device.id, () => getRecap({ sessionId, year, includeBalances: c.req.query('includeBalances') === '1' }))) }
+    catch { return c.json({ error: 'not_found', message: 'Abend nicht abgeschlossen oder nicht vorhanden.' }, 404) }
+  })
+
+  app.get('/achievements', c => {
+    const device = requireDevice(c)
+    if (device instanceof Response) return device
+    return c.json(snapshots.withDevice(device.id, () => buildAchievements(getStatsRawData())))
   })
 
   app.get('/me', (c) => c.json({ email: c.get('adminEmail'), role: c.get('role'), devNoAuth: config.devNoAuth }))
@@ -501,6 +549,14 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store; snapshot
 
     const device = requireDevice(c)
     if (device instanceof Response) return device
+    const actor = c.get('adminEmail'), requestId = request.data.requestId
+    const requestJson = JSON.stringify({ deviceId: device.id, type: request.data.type, payload })
+    if (requestId) {
+      const previous = store.db.prepare('SELECT command_id, request_json FROM admin_requests WHERE actor = ? AND request_id = ?').get(actor, requestId) as { command_id: string; request_json: string } | undefined
+      if (previous) return previous.request_json === requestJson
+        ? c.json(store.getCommand(previous.command_id) ?? { id: previous.command_id, status: 'completed' })
+        : c.json({ error: 'request_conflict', message: 'Buchungskennung schon verwendet.' }, 409)
+    }
     if (!snapshots.has(device.id)) return noSnapshot(c)
     try {
       snapshots.withDevice(device.id, () => checkAgainstSnapshot(request.data.type, payload, store, device.id))
@@ -511,8 +567,15 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store; snapshot
       throw error
     }
 
-    const command = store.createCommand({ deviceId: device.id, type: request.data.type, payload, createdBy: c.get('adminEmail') })
-    return c.json(command, 201)
+    if (connectionState(store, device.id).transfer) return c.json({ error: 'transfer_locked', message: 'Umzug aktiv. Auf diesem Gerät sind Buchungsaufträge gesperrt.' }, 409)
+    if ((request.data.type === 'loss.record' || request.data.type === 'beerround.record' || (request.data.type === 'settings.update' && ['hapticsEnabled', 'achievementAnimations', 'autoBackup'].some(key => payload[key] !== undefined))) && (store.getSnapshotMeta(device.id)?.schemaVersion ?? 0) < 10) return c.json({ error: 'upgrade_required', message: 'Diese Funktion benötigt Schockboard Next auf dem ausgewählten Gerät.' }, 409)
+    store.db.exec('BEGIN IMMEDIATE')
+    try {
+      const command = store.createCommand({ deviceId: device.id, type: request.data.type, payload, createdBy: actor })
+      if (requestId) store.db.prepare('INSERT INTO admin_requests(actor, request_id, command_id, request_json) VALUES (?, ?, ?, ?)').run(actor, requestId, command.id, requestJson)
+      store.db.exec('COMMIT')
+      return c.json(command, 201)
+    } catch (error) { store.db.exec('ROLLBACK'); throw error }
   })
 
   /**

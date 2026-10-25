@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router'
 import { useMemo, useState } from 'react'
 import { ScrollView, View } from 'react-native'
 
@@ -5,6 +6,7 @@ import { PlayerAvatar } from '@/components/avatar'
 import { BarChart, LineChart, StackedBar, type BarDatum } from '@/components/charts'
 import {
   AppText,
+  Button,
   Badge,
   Card,
   CardHeader,
@@ -56,6 +58,7 @@ function compactEuro(cents: number) {
 
 export default function StatsScreen() {
   const runtime = useRuntime()
+  const router = useRouter()
   const { isTablet } = useDeviceLayout()
   const [season, setSeason] = useState<string | null>(null)
   const [metric, setMetric] = useState<Metric>('lossCount')
@@ -135,9 +138,10 @@ export default function StatsScreen() {
       <ScreenHeader
         title="Statistik"
         context={`${season ? `Saison ${season}` : 'Alle Saisons'} · ${stats.eveningCount} ${stats.eveningCount === 1 ? 'abgeschlossener Abend' : 'abgeschlossene Abende'}`}
+        actions={<Button size="sm" tone="secondary" icon="trophy-outline" onPress={() => router.push('/achievements')}>Erfolge</Button>}
       />
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.xs }}>
+      <ScrollView horizontal style={{ flexGrow: 0, flexShrink: 0 }} showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.xs, alignItems: 'center' }}>
         <Chip label="Gesamt" icon="infinite-outline" selected={season === null} onPress={() => { if (season !== null) { Feedback.tap(); setSeason(null) } }} />
         {seasons.map((item) => (
           <Chip key={item} label={`Saison ${item}`} selected={season === item} onPress={() => { if (season !== item) { Feedback.tap(); setSeason(item) } }} />

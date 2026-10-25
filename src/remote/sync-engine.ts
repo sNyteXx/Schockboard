@@ -1,3 +1,5 @@
+import { HandoffStore } from '@/remote/handoff'
+import { isHandoffLocked } from '@/domain/write-access'
 import { fetch } from 'expo/fetch'
 
 import { LATEST_SCHEMA_VERSION, ensureDatabaseReady } from '@/db/bootstrap'
@@ -136,6 +138,8 @@ async function runSync(): Promise<SyncOutcome> {
   const config = await ensureEnrolled()
   if (!config) return { status: 'not-paired' }
 
+  await HandoffStore.initialize()
+  if (isHandoffLocked() || await RemoteConfigStore.getLinkedHost()) return { status: 'ok', applied: 0, uploaded: false, at: new Date().toISOString() }
   ensureDatabaseReady()
   const account = await AuthService.ensureLocalAccount()
   if (!account) throw new Error('Kein lokales Konto vorhanden.')
@@ -164,8 +168,8 @@ async function runSync(): Promise<SyncOutcome> {
 
 export const SyncEngine = {
   /** Runs one sync round; concurrent callers share the in-flight round. */
-  syncNow(): Promise<SyncOutcome> {
-    if (!running && Date.now() < nextAttemptAt && lastOutcome) return Promise.resolve(lastOutcome)
+  syncNow(force = false): Promise<SyncOutcome> {
+    if (!force && !running && Date.now() < nextAttemptAt && lastOutcome) return Promise.resolve(lastOutcome)
     if (!running) {
       running = runSync()
         .catch(async (error): Promise<SyncOutcome> => {

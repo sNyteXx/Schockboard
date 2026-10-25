@@ -1,3 +1,5 @@
+import { buildAchievements } from '@/domain/achievements'
+import { getStatsRawData } from '@/db/stats-queries'
 import Ionicons from '@expo/vector-icons/Ionicons'
 import * as Sharing from 'expo-sharing'
 import { LinearGradient } from 'expo-linear-gradient'
@@ -127,6 +129,7 @@ export default function SessionDetailScreen() {
   const [beerPlayerId, setBeerPlayerId] = useState('')
   const [beerNote, setBeerNote] = useState('')
   const [closing, setClosing] = useState(false)
+  const [earnedMessage, setEarnedMessage] = useState<string | null>(null)
   const [sharing, setSharing] = useState(false)
   const initializedFor = useRef<string | null>(null)
   const resultRef = useRef<View>(null)
@@ -256,13 +259,16 @@ export default function SessionDetailScreen() {
       Feedback.success()
       runtime.bumpDataVersion()
       runtime.setFlash({
-        type: 'success',
-        message: result.reason === 'disabled'
+        type: result.backupError ? 'error' : 'success',
+        message: result.backupError ? `Abend abgeschlossen. Sicherung fehlgeschlagen: ${result.backupError}` : result.reason === 'disabled'
           ? 'Spielabend abgeschlossen – automatische Abwesenheitsbeträge sind deaktiviert.'
           : result.reason === 'no-present-core'
             ? 'Spielabend abgeschlossen – keine Zuschläge ohne anwesende Stammspieler.'
             : 'Spielabend abgeschlossen.',
       })
+      const earned = buildAchievements(getStatsRawData()).filter(award => award.sessionId === session.id)
+      if (earned.length) setEarnedMessage(earned.map(award => `${award.playerName} · ${award.title}`).join(' · '))
+      if (earned.length && !result.backupError) runtime.setFlash({ type: 'success', message: `${earned.length} neue Erfolge: ${earned.map(award => `${award.playerName} · ${award.title}`).join(', ')}` })
       setStep('summary')
     } catch (error) {
       showError(error, 'Spielabend konnte nicht abgeschlossen werden.')
@@ -537,10 +543,14 @@ export default function SessionDetailScreen() {
     </Card>
   )
   const summaryActions = isClosed ? (
+    <>
+    {earnedMessage ? <Animated.View entering={SessionService.getSettings().achievementAnimations ? FadeIn.duration(350).reduceMotion(ReduceMotion.System) : undefined}><Notice type="success" message={`Neue Erfolge: ${earnedMessage}`} /></Animated.View> : null}
     <Split>
+      <Button tone="secondary" icon="trophy-outline" onPress={() => router.push({ pathname: '/achievements', params: { sessionId: session.id } })}>Rückblick & Erfolge teilen</Button>
       <Button icon="image-outline" onPress={shareAsImage} loading={sharing}>{sharing ? 'Bild wird erstellt…' : 'Als Bild teilen'}</Button>
       <Button tone="secondary" icon="chatbubble-ellipses-outline" onPress={shareAsText}>Als Text teilen</Button>
     </Split>
+    </>
   ) : (
     <>
       <Split>

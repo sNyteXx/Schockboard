@@ -1,5 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { Tabs } from "expo-router";
+import { Redirect, Tabs } from "expo-router";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -128,6 +128,8 @@ function AppTabBar({ state, navigation, rail, themeId }: BottomTabBarProps & { r
 export default function TabsLayout() {
   const runtime = useRuntime();
   const { isTablet } = useDeviceLayout();
+
+  if (runtime.linkedHost || runtime.handoffLocked) return <Redirect href="/connect" />;
 
   return (
     <AuthGate>

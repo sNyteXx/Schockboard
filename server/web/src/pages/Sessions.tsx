@@ -1,3 +1,4 @@
+import { parseEuroToCents } from '@/domain/utils'
 import { useState } from 'react'
 
 import { formatCurrency, formatDate, formatDateTime } from '@/domain/format'
@@ -9,13 +10,14 @@ import { Avatar, Badge, Button, Card, Chips, EmptyState, ErrorView, Money, Page,
 import { Icon } from '../icons'
 import {
   BookingRow,
+  useQueue,
   DeleteSessionDialog,
   InlineSessionEditor,
   OverrideNotice,
   SessionPendingBadges,
   type SessionRef,
 } from '../overrides'
-import { Link, navigate, useApi, usePendingOverrides } from '../state'
+import { Link, navigate, useApi, usePendingOverrides, useApp } from '../state'
 import { HistoryList } from './History'
 
 const SEGMENTS = [
@@ -176,6 +178,9 @@ export function SessionsPage() {
 type DetailWithRefs = Omit<SessionDetail, 'timeline'> & { timeline: HistoryRow[] }
 
 export function SessionDetailPage({ sessionId }: { sessionId: string }) {
+  const { run: queue, busy: booking } = useQueue()
+  const { toast } = useApp()
+  const [amount, setAmount] = useState('1,00')
   const detail = useApi<DetailWithRefs>(`/sessions/${encodeURIComponent(sessionId)}`)
   const overrides = usePendingOverrides()
   const [editing, setEditing] = useState(false)
@@ -223,6 +228,7 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
       }
       actions={
         <>
+          <Link to={`/erfolge?session=${encodeURIComponent(sessionId)}`} className="btn btn-secondary btn-sm">Rückblick & Erfolge</Link>
           <Link to="/abende" className="btn btn-ghost btn-sm">
             <Icon name="chevron-left" size={15} /> Alle Abende
           </Link>
@@ -258,6 +264,14 @@ export function SessionDetailPage({ sessionId }: { sessionId: string }) {
             </Card>
           ) : null}
           <SessionPendingBadges sessionId={sessionId} />
+          {isOpen ? <Card title="Am Spieltisch buchen" icon="dice">
+            <p className="muted">Das führende Gerät bestätigt die Buchungen beim nächsten Abgleich. Bis dahin bleiben sie ausstehend.</p>
+            <label className="field">Betrag für Zahlung / Bierrunde (€)<input inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} /></label>
+            {data.attendance.filter(player => player.present).map(player => <div className="list-row" key={player.playerId}><strong>{player.playerName}</strong><div className="form-actions">
+              <Button size="sm" disabled={booking} onClick={() => void queue('loss.record', { sessionId, playerId: player.playerId }, 'Verlust beauftragt.')}>+ Verlust</Button>
+              {(['beerround.record', 'payment.record'] as const).map(type => <Button key={type} size="sm" variant="secondary" disabled={booking} onClick={() => { try { const amountCents = parseEuroToCents(amount); void queue(type, { sessionId, playerId: player.playerId, amountCents }, 'Buchung beauftragt.') } catch (error) { toast((error as Error).message, 'error') } }}>{type === 'payment.record' ? 'Zahlung' : 'Bierrunde'}</Button>)}
+            </div></div>)}
+          </Card> : null}
           <div className={`stat-grid four ${deleting ? 'struck' : ''}`}>
             <StatTile label="Summe" icon="wallet" tone="accent" value={<span className="strike">{formatCurrency(data.session.totalLossCents + data.session.totalAbsenceCents)}</span>} hint={isOpen ? 'läuft noch' : 'beendet'} />
             <StatTile label="Verluste & Bierrunden" icon="dice" value={<span className="strike">{formatCurrency(data.session.totalLossCents)}</span>} hint={`${data.session.lossCount} Einträge`} />

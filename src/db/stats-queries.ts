@@ -9,7 +9,7 @@ import { sqliteAll } from '@/db/client'
 
 export type StatsRawData = {
   players: Array<{ id: string; name: string; isCore: boolean; isArchived: boolean }>
-  sessions: Array<{ id: string; title: string; startedAt: string }>
+  sessions: Array<{ id: string; title: string; startedAt: string; closedAt?: string | null }>
   attendance: Array<{ sessionId: string; playerId: string; present: boolean }>
   losses: Array<{ sessionId: string; playerId: string; lossCount: number; lossCents: number; beerRoundCount: number; beerRoundCents: number }>
   absences: Array<{ sessionId: string; playerId: string; amountCents: number }>
@@ -19,8 +19,8 @@ export function getStatsRawData(): StatsRawData {
   const players = sqliteAll<{ id: string; name: string; is_core: number; is_archived: number }>(
     'SELECT id, name, is_core, is_archived FROM players ORDER BY name ASC'
   )
-  const sessions = sqliteAll<{ id: string; title: string; started_at: string }>(
-    "SELECT id, title, started_at FROM sessions WHERE status = 'closed' ORDER BY started_at ASC"
+  const sessions = sqliteAll<{ id: string; title: string; started_at: string; closed_at: string | null }>(
+    "SELECT id, title, started_at, closed_at FROM sessions WHERE status = 'closed' ORDER BY started_at ASC"
   )
   const attendance = sqliteAll<{ session_id: string; player_id: string; present: number }>(
     `
@@ -64,7 +64,7 @@ export function getStatsRawData(): StatsRawData {
 
   return {
     players: players.map((row) => ({ id: row.id, name: row.name, isCore: Boolean(row.is_core), isArchived: Boolean(row.is_archived) })),
-    sessions: sessions.map((row) => ({ id: row.id, title: row.title, startedAt: row.started_at })),
+    sessions: sessions.map((row) => ({ id: row.id, title: row.title, startedAt: row.started_at, closedAt: row.closed_at })),
     attendance: attendance.map((row) => ({ sessionId: row.session_id, playerId: row.player_id, present: Boolean(row.present) })),
     losses: losses.map((row) => ({
       sessionId: row.session_id,

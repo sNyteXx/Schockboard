@@ -42,6 +42,7 @@ export function ActionsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (document.documentElement.dataset.tableLocked === 'true') return
       if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'k') {
         event.preventDefault()
         setPalette((open) => !open)

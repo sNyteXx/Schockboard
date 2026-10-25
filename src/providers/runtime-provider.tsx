@@ -1,3 +1,7 @@
+import { RemoteConfigStore } from '@/remote/config'
+import { HandoffStore } from '@/remote/handoff'
+import { setHapticsEnabled } from '@/services/haptics'
+import { assertWritable, isHandoffLocked } from '@/domain/write-access'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { ActivityIndicator, SafeAreaView, StyleSheet, Text } from 'react-native'
 
@@ -16,6 +20,10 @@ import { useRemoteSync } from '@/remote/use-remote-sync'
 
 type RuntimeContextValue = {
   ready: boolean
+  tableLocked: boolean
+  linkedHost: string | null
+  handoffLocked: boolean
+  setTableLocked: (locked: boolean) => void
   account: AuthAccount | null
   dataVersion: number
   flash: FlashMessage | null
@@ -40,6 +48,8 @@ type RuntimeContextValue = {
 const RuntimeContext = createContext<RuntimeContextValue | null>(null)
 
 export function RuntimeProvider({ children }: { children: React.ReactNode }) {
+  const [linkedHost, setLinkedHost] = useState<string | null>(null)
+  const [tableLocked, setTableLocked] = useState(false)
   const [ready, setReady] = useState(false)
   const [account, setAccount] = useState<AuthAccount | null>(null)
   const [dataVersion, setDataVersion] = useState(0)
@@ -48,6 +58,8 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
   const [themeId, setThemeIdState] = useState<ThemeId>('bvb09')
 
   async function refreshAuthState() {
+    await HandoffStore.initialize()
+    setLinkedHost(await RemoteConfigStore.getLinkedHost())
     await DatabaseService.initialize()
     const currentAccount = await AuthService.ensureLocalAccount()
 
@@ -55,6 +67,7 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const settings = SessionService.getSettings()
+      setHapticsEnabled(settings.hapticsEnabled)
       setViewModeState(settings.viewMode)
       setActiveTheme(settings.themeId)
       setThemeIdState(settings.themeId as ThemeId)
@@ -71,8 +84,10 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
 
   useRemoteSync({ ready, dataVersion, onRemoteChanges: () => setDataVersion((v) => v + 1) })
 
+  useEffect(() => { if (ready) setHapticsEnabled(SessionService.getSettings().hapticsEnabled) }, [ready, dataVersion])
+
   const value: RuntimeContextValue = {
-    ready,
+    ready, tableLocked, setTableLocked, linkedHost, handoffLocked: isHandoffLocked(),
     account,
     dataVersion,
     flash,
@@ -120,6 +135,7 @@ export function RuntimeProvider({ children }: { children: React.ReactNode }) {
             style: 'destructive',
             async onPress() {
               try {
+                assertWritable()
                 UndoService.cancelPendingUndo()
                 await AuthService.logout()
                 await DatabaseService.reset()

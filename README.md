@@ -1,7 +1,7 @@
-# Schockboard 2.0 APK
+# Schockboard Next
 
 Schockboard ist eine Android-App zur Verwaltung von Spielabenden, Verlusten und offenen Beträgen in der Runde.
-Die App läuft vollständig lokal auf dem Gerät (SQLite), ohne Cloud-Backend.
+Die Buchhaltung bleibt lokal auf dem Spieltisch (SQLite). Der optionale Server stellt die Web-Kommandozentrale, Geräte-Kopplung und geprüfte Buchungsaufträge bereit.
 
 ## Aktueller Stand
 
@@ -78,8 +78,19 @@ Die App läuft vollständig lokal auf dem Gerät (SQLite), ohne Cloud-Backend.
 
 Die Hauptoberfläche ist für Touch-Interaktion neu aufgebaut. Im breiten Tablet-Fenster gibt es ein Spielerbrett links und Aktions-/Verlaufsbereiche rechts; auf schmalen Displays werden sie untereinander angeordnet. Im Tabletmodus sitzt die Navigation als seitliche Leiste.
 
-Der BVB-09-Look verwendet das echte BVB-Logo aus [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Borussia_Dortmund_logo.svg) (ursprünglich von bvb.de). Die Bilddatei ist dort als gemeinfrei wegen fehlender Schöpfungshöhe gekennzeichnet; **Markenrechte bleiben unberührt**. Schockboard ist ein inoffizielles Fan-Projekt ohne Verbindung zum Verein. Das Paket bleibt `de.schockboard.apk`. Für ein direktes APK-Update muss **auch derselbe Android-Signaturschlüssel wie bei v1.1.0** verwendet werden; andernfalls ist ein Gerätewechsel per vorher exportierter SQLite-Sicherung nötig. Vor realen Updates die Migration auf einem Testgerät validieren.
+Der BVB-09-Look verwendet das echte BVB-Logo aus [Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Borussia_Dortmund_logo.svg) (ursprünglich von bvb.de). Die Bilddatei ist dort als gemeinfrei wegen fehlender Schöpfungshöhe gekennzeichnet; **Markenrechte bleiben unberührt**. Schockboard ist ein inoffizielles Fan-Projekt ohne Verbindung zum Verein. Next verwendet das eigene Paket `de.schockboard.next` und lässt sich neben `de.schockboard.apk` installieren. Beide Apps haben getrennte Daten. Zum Umstieg die alte SQLite-Sicherung in Next unter Setup wiederherstellen; danach nur Next für neue Buchungen verwenden. Die alte App bleibt als unveränderter Rückfall erhalten.
 
 ## Release
 
 Die aktuelle APK ist im Bereich **Releases** dieses Repositories verfügbar.
+
+## Geräte, Erfolge und Sicherungen
+
+- **Geräte & Runde:** QR-Einladungen sind fünf Minuten gültig und einmal verwendbar. Neue Geräte sind Zuschauer. Der Spieltisch oder ein Web-Administrator gibt Bedienrechte für Verluste, Bierrunden und Zahlungen frei. Der Spieltisch bestätigt jeden Auftrag; Wiederholungen mit derselben Kennung werden nicht doppelt gebucht. Zuschauer erhalten keine persönlichen Kontostände oder Buchungsnotizen.
+- **Geräteumzug zwischen Next-Installationen:** Das Quellgerät sichert und sperrt seine Buchhaltung. Das Ziel sichert den eigenen Stand, übernimmt die vollständige Datenbank und bestätigt deren Prüfsumme. Die Quelle bleibt danach Zuschauer. Bei unterbrochener Übertragung unter Geräte & Runde fortsetzen; ein begonnener Import kann nur am Ziel mit Wiederherstellung seiner Sicherheitskopie abgebrochen werden. Datenstände werden nicht zusammengeführt.
+- **Trophäen:** Stammgast (10/25/50), Weiße Weste, Glückssträhne, Dauerbrenner und Comeback werden aus abgeschlossenen, nicht leeren Abenden berechnet. Historische Korrekturen ändern Fortschritt und Freischaltungen.
+- **Rückblicke:** Abend oder Jahr als PNG teilen, mit allen Teilnehmern und freigeschalteten Erfolgen. Persönliche Kontostände nur nach ausdrücklicher Auswahl. App und Web verwenden dieselbe Auswertung und Grafik.
+- **Setup:** Vibration, Erfolgsanimationen und automatische Abend-Sicherungen; zehn automatische Stände, zusätzliche Sicherheitskopien vor Wiederherstellung/Umzug. Der Webserver hält die letzten zehn empfangenen Abendabschlüsse als Download bereit. Die Tischsperre schützt gegen versehentliche Berührungen, sie ist keine Zugangssperre.
+- **Tablet:** Filter behalten ihre natürliche Höhe, Kennzahlen/Rekorde ihre Inhaltshöhe. Feste Seiten berücksichtigen die Android-Taskleiste.
+
+Das neue App-Symbol wurde mit dem Imagegen-Werkzeug als eigenes Fan-Icon erzeugt: schwarzer/gelber Schild mit BVB-09-Anspielung und drei Würfeln, transparent, ohne Hintergrundszene. `assets/next-icon.png` ist das Vollbild; `assets/next-icon-foreground.png` enthält zusätzlichen transparenten Rand für Android-Masken. Die Web-Kommandozentrale nutzt dasselbe Motiv. Markenhinweis oben gilt weiterhin.

@@ -1,7 +1,11 @@
 import * as Haptics from 'expo-haptics'
 
+let enabled = true
+export function setHapticsEnabled(value: boolean) { enabled = value }
+
 // Haptics are a nice-to-have: never let a missing vibrator break a booking.
 function fire(effect: () => Promise<void>) {
+  if (!enabled) return
   effect().catch(() => undefined)
 }
 

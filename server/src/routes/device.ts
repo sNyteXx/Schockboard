@@ -3,6 +3,7 @@ import { bodyLimit } from 'hono/body-limit'
 
 import { commandResultsRequestSchema, deviceCommandsResponseSchema, enrollRequestSchema, PROTOCOL_VERSION } from '@/remote/protocol'
 
+import { connectionRoutes, outgoingTransfer } from '../connections'
 import { createDeviceAuth, type AppEnv } from '../auth'
 import type { ServerConfig } from '../config'
 import { rateLimit } from '../rate-limit'
@@ -46,12 +47,14 @@ export function deviceRoutes(deps: { config: ServerConfig; store: Store; snapsho
 
   app.use('*', createDeviceAuth(store))
 
+  app.route('/connect', connectionRoutes(deps, false))
+
   app.get('/ping', (c) => c.json({ ok: true as const }))
 
   app.get('/commands', (c) => {
     const body = deviceCommandsResponseSchema.parse({
       protocolVersion: PROTOCOL_VERSION,
-      commands: store.fetchPendingForDevice(c.get('device').id, 100),
+      commands: outgoingTransfer(store, c.get('device').id) ? [] : store.fetchPendingForDevice(c.get('device').id, 100),
     })
     c.header('Cache-Control', 'no-store')
     return c.json(body)
@@ -96,6 +99,7 @@ export function deviceRoutes(deps: { config: ServerConfig; store: Store; snapsho
       const bytes = new Uint8Array(await c.req.arrayBuffer())
       try {
         const deviceId = c.get('device').id
+        if (outgoingTransfer(store, deviceId)) return c.json({ error: 'transfer_locked', message: 'Quellgerät für den Umzug gesperrt.' }, 409)
         const info = snapshots.install(deviceId, bytes, config.maxSnapshotBytes)
         const receivedAt = store.recordSnapshot(deviceId, {
           createdAt,

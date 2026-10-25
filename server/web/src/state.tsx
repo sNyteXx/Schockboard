@@ -286,6 +286,8 @@ export function useApi<T>(path: string | null) {
 // ---- command descriptions --------------------------------------------------
 
 export const COMMAND_LABELS: Record<StoredCommand['type'], string> = {
+  'loss.record': 'Verlust',
+  'beerround.record': 'Bierrunde',
   'correction.record': 'Korrektur',
   'payment.record': 'Zahlung',
   'player.create': 'Spieler anlegen',
@@ -321,6 +323,8 @@ export function describeCommand(command: StoredCommand, names: Map<string, strin
   const name = (id: unknown) => names.get(String(id)) ?? 'Unbekannter Spieler'
   const session = (id: unknown) => (sessions.get(String(id)) ? `„${sessions.get(String(id))}“` : 'Abend')
   switch (command.type) {
+    case 'loss.record': return `Verlust für ${name(payload.playerId)}`
+    case 'beerround.record': return `Bierrunde für ${name(payload.playerId)}: ${formatCurrency(Number(payload.amountCents))}`
     case 'correction.record':
       return `${name(payload.playerId)}: ${formatSignedCurrency(Number(payload.amountCents))} – ${String(payload.reason)}`
     case 'payment.record':
