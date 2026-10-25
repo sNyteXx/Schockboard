@@ -71,7 +71,7 @@ describe.skipIf(!existsSync(serverEntry))('app ↔ admin server sync', () => {
     const first = await SyncEngine.syncNow()
     expect((await RemoteConfigStore.get())?.token).toBeTruthy()
     const { body: status } = await admin('/status')
-    expect(status).toMatchObject({ paired: true, deviceLabel: 'app: Test-Tablet' })
+    expect(status).toMatchObject({ paired: true, deviceLabel: 'app: Next · Test-Tablet' })
     expect(first).toMatchObject({ status: 'ok', applied: 0, uploaded: true })
     const { body: players } = await admin('/players')
     expect(JSON.stringify(players)).toContain('Anna')
