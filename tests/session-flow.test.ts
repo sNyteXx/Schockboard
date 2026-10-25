@@ -5,6 +5,7 @@ vi.mock('@/db/client', async () => (await import('./support/memory-sqlite')).cli
 
 import { ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
 import {
+  deletePlayer,
   addGuestToSession,
   updatePlayerFlags,
   cancelSession,
@@ -193,5 +194,16 @@ describe('active and archived players', () => {
     expect(memory.current.getFirstSync<{ n: number }>("SELECT COUNT(*) AS n FROM players WHERE lower(name) = 'onkel heinz'")!.n).toBe(1)
     expect(() => addGuestToSession({ actor, sessionId: next, name: 'Onkel Heinz' })).toThrow(/schon dabei/)
     expect(() => createPlayer({ actor, name: 'ANNA', isCore: true })).toThrow(/gibt es schon/)
+  })
+})
+
+describe('deleting players', () => {
+  it('removes an absent regular from the open evening, but refuses with bookings tonight', () => {
+    const { sessionId, present, absent } = setUpEvening('full_average')
+    addLossEntry({ actor, sessionId, playerId: present[0], note: null })
+
+    deletePlayer({ actor, playerId: absent[0] })
+    expect(getSessionDetail(sessionId)!.attendance.some((row) => row.playerId === absent[0])).toBe(false)
+    expect(() => deletePlayer({ actor, playerId: present[0] })).toThrow(/Buchungen/)
   })
 })

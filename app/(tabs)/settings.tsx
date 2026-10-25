@@ -156,12 +156,11 @@ export default function SettingsScreen() {
         ...changes,
       });
       Feedback.tap();
-      data.reload();
+      runtime.bumpDataVersion();
     } catch (caught) {
-      runtime.setFlash({
-        type: "error",
-        message: caught instanceof Error ? caught.message : "Spielerstatus konnte nicht geändert werden.",
-      });
+      // A dialog, not the banner at the top: the player list is far down the page.
+      Feedback.error();
+      Alert.alert("Nicht möglich", caught instanceof Error ? caught.message : "Spielerstatus konnte nicht geändert werden.");
     }
   }
 
@@ -180,13 +179,12 @@ export default function SettingsScreen() {
                 actor,
                 playerId,
               });
-              data.reload();
-              runtime.setFlash({ type: "success", message: `„${playerName}" wurde gelöscht.` });
+              Feedback.success();
+              runtime.bumpDataVersion();
+              Alert.alert("Gelöscht", `„${playerName}" wurde gelöscht.`);
             } catch (caught) {
-              runtime.setFlash({
-                type: "error",
-                message: caught instanceof Error ? caught.message : "Spieler konnte nicht gelöscht werden.",
-              });
+              Feedback.error();
+              Alert.alert("Nicht möglich", caught instanceof Error ? caught.message : "Spieler konnte nicht gelöscht werden.");
             }
           },
         },

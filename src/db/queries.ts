@@ -409,19 +409,21 @@ export function deletePlayer(input: { actor: Actor; playerId: string }) {
     throw new Error('Spieler nicht gefunden.')
   }
 
-  const openAttendance = sqliteGet<{ cnt: number }>(
+  // Only bookings at the running evening block deletion; mere attendance
+  // there is removed together with the player (same rule as archiving).
+  const openBookings = sqliteGet<{ cnt: number }>(
     `
       SELECT COUNT(*) AS cnt
-      FROM session_attendance sa
-      INNER JOIN sessions s ON s.id = sa.session_id
-      WHERE sa.player_id = $playerId AND s.status = 'open'
+      FROM loss_entries le
+      INNER JOIN sessions s ON s.id = le.session_id
+      WHERE le.player_id = $playerId AND s.status = 'open'
     `,
     { $playerId: input.playerId }
   )
 
-  if (openAttendance && openAttendance.cnt > 0) {
+  if (openBookings && openBookings.cnt > 0) {
     throw new Error(
-      'Der Spieler ist einem offenen Spielabend zugeordnet und kann nicht gelöscht werden.'
+      `${existing.name} hat am laufenden Abend Buchungen – erst stornieren oder den Abend abschließen, dann löschen.`
     )
   }
 
