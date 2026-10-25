@@ -149,11 +149,11 @@ export default function DashboardScreen() {
             <EmptyState icon="wallet-outline">Noch keine Buchungen in der Kasse.</EmptyState>
           )}
           <Divider />
-          <CardHeader overline="Offene Posten" title="Größte Zahler" />
+          {debtorBars.length ? <CardHeader overline="Offene Posten" title="Größte Zahler" /> : null}
           {debtorBars.length ? (
             <BarChart data={debtorBars} onPressItem={() => router.push("/(tabs)/cashbox")} />
           ) : (
-            <EmptyState icon="checkmark-done-outline">Keine offenen Schulden – alles beglichen.</EmptyState>
+            <AppText tone="success">Keine offenen Schulden – alles beglichen.</AppText>
           )}
           {hiddenDebtors > 0 ? (
             <Button tone="ghost" size="sm" iconRight="arrow-forward" onPress={() => router.push("/(tabs)/cashbox")}>{`Alle anzeigen (+${hiddenDebtors})`}</Button>

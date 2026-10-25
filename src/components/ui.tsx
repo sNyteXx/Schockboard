@@ -159,7 +159,7 @@ const useStyles = themedStyles(({ c, t, sizeClass }) => {
     kpiValue: { ...t.display, color: c.text },
     kpiHint: { ...t.caption, color: c.muted },
     stat: { flexGrow: 1, minWidth: 0, gap: 4, padding: spacing.sm, borderRadius: radius.md, backgroundColor: c.surface, borderWidth: 1, borderColor: c.border },
-    statLabel: { ...t.overline, color: c.subtle },
+    statLabel: { ...t.overline, color: c.subtle, flexShrink: 1 },
     statValue: { ...t.numeric, color: c.text },
     statHint: { ...t.caption, color: c.muted },
   };
