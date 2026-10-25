@@ -84,6 +84,16 @@ Der BVB-09-Look verwendet das echte BVB-Logo aus [Wikimedia Commons](https://com
 
 Die aktuelle APK ist im Bereich **Releases** dieses Repositories verfügbar.
 
+## Screenshots
+
+Web-Kommandozentrale und Trophäen am Desktop sowie die Buchungsansicht bei Handybreite. Alle Bilder verwenden ausschließlich die Beispieldaten aus `server/scripts/demo-data.ts` (Anna, Ben, Cem und Dana). Die lokale Demo läuft ohne Anmeldung; der produktive Server bleibt zugangsgeschützt.
+
+![Web-Kommandozentrale mit Beispieldaten](docs/screenshots/web-kommandozentrale.png)
+
+![Trophäen und Fortschritt am Desktop](docs/screenshots/web-trophaeen.png)
+
+<img src="docs/screenshots/web-handy-spielabend.png" alt="Web-Spielabend bei 390 Pixel Handybreite" width="390">
+
 ## Geräte, Erfolge und Sicherungen
 
 - **Geräte & Runde:** QR-Einladungen sind fünf Minuten gültig und einmal verwendbar. Neue Geräte sind Zuschauer. Der Spieltisch oder ein Web-Administrator gibt Bedienrechte für Verluste, Bierrunden und Zahlungen frei. Der Spieltisch bestätigt jeden Auftrag; Wiederholungen mit derselben Kennung werden nicht doppelt gebucht. Zuschauer erhalten keine persönlichen Kontostände oder Buchungsnotizen.
