@@ -4,7 +4,8 @@ import { DatabaseSync } from 'node:sqlite'
  * Server implementation of the app's `@/db/client` module (expo-sqlite sync
  * API subset), backed by `node:sqlite`. The app's query layer
  * (src/db/queries.ts) runs unchanged against whichever database is active —
- * normally the working copy of the latest device snapshot.
+ * normally the working copy of one device's latest snapshot, selected for the
+ * duration of a (synchronous) admin request via `withSelectedDatabase`.
  */
 type Params = Record<string, unknown>
 type Bindable = string | number | bigint | null | Uint8Array
@@ -66,6 +67,26 @@ export function setActiveDatabase(db: DatabaseSync | null) {
   const previous = active
   active = db ? wrapDatabase(db) : null
   return previous
+}
+
+/**
+ * Runs `task` synchronously with `adapter` as the active database and
+ * restores the previous selection afterwards (also on errors). Node runs
+ * synchronous code to completion, so no other request can observe the
+ * selection. Async tasks are refused: an await would leak the selection.
+ */
+export function withSelectedDatabase<T>(adapter: SqliteAdapter, task: () => T): T {
+  const previous = active
+  active = adapter
+  try {
+    const result = task()
+    if (result && typeof (result as { then?: unknown }).then === 'function') {
+      throw new Error('withSelectedDatabase: task must be synchronous')
+    }
+    return result
+  } finally {
+    active = previous
+  }
 }
 
 export function hasActiveDatabase() {

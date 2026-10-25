@@ -49,15 +49,18 @@ describe('roles', () => {
 
   it('keeps device management admin-only', async () => {
     const { manager } = await setup()
+    const { deviceId } = await server.pair()
     for (const [method, path] of [
-      ['POST', '/api/admin/device/enrollment'],
-      ['DELETE', '/api/admin/device/enrollment'],
       ['POST', '/api/admin/device/revoke'],
       ['POST', '/api/admin/device/pair'],
+      ['PATCH', `/api/admin/devices/${deviceId}`],
+      ['POST', `/api/admin/devices/${deviceId}/revoke`],
+      ['DELETE', `/api/admin/devices/${deviceId}`],
     ] as const) {
-      expect((await manager(path, { method })).status).toBe(403)
+      expect((await manager(path, { method, body: '{"label":"x"}' })).status).toBe(403)
     }
-    expect((await server.admin('/api/admin/device/enrollment', { method: 'POST' })).status).toBe(200)
+    expect((await manager('/api/admin/devices')).status).toBe(200)
+    expect((await server.admin(`/api/admin/devices/${deviceId}`, { method: 'PATCH', body: '{"label":"Tablet"}' })).status).toBe(200)
     expect((await server.admin('/api/admin/device/revoke', { method: 'POST' })).status).toBe(200)
   })
 

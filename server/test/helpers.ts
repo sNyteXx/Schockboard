@@ -7,6 +7,7 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWK } from
 
 import { createApp } from '../src/app'
 import { loadConfig, type ServerConfig } from '../src/config'
+import { migrateLegacySnapshot } from '../src/migrate'
 import { createSnapshotManager } from '../src/snapshot'
 import { openStore } from '../src/store'
 
@@ -31,17 +32,18 @@ export async function createAccessKeys() {
   return { jwks, sign }
 }
 
-export async function createTestServer(overrides: Partial<ServerConfig> = {}) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-test-'))
+export async function createTestServer(overrides: Partial<ServerConfig> = {}, options: { dataDir?: string } = {}) {
+  const dataDir = options.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'sb-test-'))
   const config: ServerConfig = {
     ...loadConfig({ DATA_DIR: dataDir, CF_ACCESS_TEAM_DOMAIN: TEAM_DOMAIN }),
     publicDir: null,
     ...overrides,
   }
-  const store = openStore(path.join(dataDir, 'server.db'))
-  const snapshots = createSnapshotManager(dataDir)
-  const keys = await createAccessKeys()
   const logs: string[] = []
+  const store = openStore(path.join(dataDir, 'server.db'), undefined, { log: (message) => logs.push(message) })
+  const snapshots = createSnapshotManager(dataDir)
+  migrateLegacySnapshot(store, snapshots, (message) => logs.push(message))
+  const keys = await createAccessKeys()
   const app = createApp({ config, store, snapshots, jwks: keys.jwks, log: (message) => logs.push(message) })
   const adminJwt = await keys.sign()
 
@@ -54,9 +56,19 @@ export async function createTestServer(overrides: Partial<ServerConfig> = {}) {
   const device = (token: string, pathname: string, init: RequestInit = {}) =>
     app.request(pathname, { ...init, headers: { Authorization: `Bearer ${token}`, ...(init.headers ?? {}) } })
 
+  /** Self-enrollment as the app does it. */
+  async function enroll(deviceName: string, headers: Record<string, string> = {}) {
+    const response = await app.request('/api/device/enroll', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ deviceName }),
+    })
+    return { status: response.status, body: (await response.json()) as { token: string; deviceId: string; error?: string } }
+  }
+
   async function pair() {
     const response = await admin('/api/admin/device/pair', { method: 'POST' })
-    return (await response.json()) as { token: string }
+    return (await response.json()) as { token: string; deviceId: string }
   }
 
   function cleanup() {
@@ -65,7 +77,7 @@ export async function createTestServer(overrides: Partial<ServerConfig> = {}) {
     fs.rmSync(dataDir, { recursive: true, force: true })
   }
 
-  return { app, config, store, snapshots, keys, admin, device, pair, cleanup, dataDir, logs }
+  return { app, config, store, snapshots, keys, admin, device, pair, enroll, cleanup, dataDir, logs }
 }
 
 const fixtureDirs: string[] = []

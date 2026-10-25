@@ -6,6 +6,7 @@ import { serve } from '@hono/node-server'
 
 import { createApp } from './app'
 import { loadConfig } from './config'
+import { migrateLegacySnapshot } from './migrate'
 import { createSnapshotManager } from './snapshot'
 import { openStore } from './store'
 
@@ -16,11 +17,14 @@ fs.mkdirSync(config.dataDir, { recursive: true })
 const store = openStore(path.join(config.dataDir, 'server.db'))
 const snapshots = createSnapshotManager(config.dataDir)
 
+// One-time move of the single-device snapshot.sqlite to snapshots/<deviceId>.sqlite (idempotent).
 try {
-  if (snapshots.loadExisting()) console.log('[schockboard] Letzter Snapshot geladen.')
+  migrateLegacySnapshot(store, snapshots)
 } catch (error) {
-  console.error(`[schockboard] Snapshot konnte nicht geladen werden: ${(error as Error).message}`)
+  console.error(`[schockboard] Snapshot-Umstellung fehlgeschlagen: ${(error as Error).message}`)
 }
+const devices = store.listActiveDevices()
+console.log(`[schockboard] ${devices.length} aktive(s) Gerät(e), ${devices.filter((device) => snapshots.has(device.id)).length} mit Datenstand.`)
 
 if (config.devNoAuth) {
   const banner = '!'.repeat(72)

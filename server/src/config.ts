@@ -18,6 +18,11 @@ export type ServerConfig = {
   devNoAuth: boolean
   maxSnapshotBytes: number
   deviceRateLimitPerMinute: number
+  /** Active devices at most; further self-enrollments are refused (403 device_limit). */
+  maxDevices: number
+  /** Self-enrollments per client IP: per minute and per day. */
+  enrollLimitPerMinute: number
+  enrollLimitPerDay: number
 }
 
 export const MAX_SNAPSHOT_BYTES = 50 * 1024 * 1024
@@ -54,5 +59,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, defaultPublicDi
     devNoAuth: env.DEV_NO_AUTH === '1',
     maxSnapshotBytes: MAX_SNAPSHOT_BYTES,
     deviceRateLimitPerMinute: Number(env.DEVICE_RATE_LIMIT_PER_MINUTE ?? 120),
+    maxDevices: Math.max(1, Math.floor(Number(env.MAX_DEVICES ?? 10)) || 10),
+    enrollLimitPerMinute: Math.max(1, Number(env.ENROLL_RATE_LIMIT_PER_MINUTE ?? 5) || 5),
+    enrollLimitPerDay: Math.max(1, Number(env.ENROLL_RATE_LIMIT_PER_DAY ?? 20) || 20),
   }
 }

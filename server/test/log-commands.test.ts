@@ -74,14 +74,14 @@ describe('command history', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-ret-'))
     const store = openStore(path.join(dir, 'server.db'), () => clock)
     try {
-      const old = store.createCommand({ type: 'player.create', payload: { name: 'A', isCore: true }, createdBy: 'x' })
+      const old = store.createCommand({ deviceId: 'dev_a', type: 'player.create', payload: { name: 'A', isCore: true }, createdBy: 'x' })
       store.cancelCommand(old.id)
-      const oldPending = store.createCommand({ type: 'player.create', payload: { name: 'B', isCore: true }, createdBy: 'x' })
+      const oldPending = store.createCommand({ deviceId: 'dev_a', type: 'player.create', payload: { name: 'B', isCore: true }, createdBy: 'x' })
       clock = '2026-02-15T00:00:00.000Z'
-      const recent = store.createCommand({ type: 'player.create', payload: { name: 'C', isCore: true }, createdBy: 'x' })
+      const recent = store.createCommand({ deviceId: 'dev_a', type: 'player.create', payload: { name: 'C', isCore: true }, createdBy: 'x' })
       store.cancelCommand(recent.id)
       expect(store.purgeFinishedCommands(30)).toBe(1)
-      expect(store.listCommands().map((command) => command.id).sort()).toEqual([oldPending.id, recent.id].sort())
+      expect(store.listCommands(null).map((command) => command.id).sort()).toEqual([oldPending.id, recent.id].sort())
     } finally {
       store.close()
       fs.rmSync(dir, { recursive: true, force: true })

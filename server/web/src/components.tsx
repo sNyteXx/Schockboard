@@ -1,8 +1,8 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { formatCurrency, formatDateTime } from '@/domain/format'
 
-import type { ApiError, StoredCommand } from './api'
+import type { ApiError, DeviceSummary, StoredCommand } from './api'
 import { Link, pendingDebtEffect, useApp } from './state'
 
 export function Page(props: { eyebrow?: string; title: string; actions?: ReactNode; children: ReactNode }) {
@@ -52,8 +52,8 @@ export function ErrorView({ error }: { error: ApiError }) {
         <div>
           <strong>Noch kein Datenstand.</strong>
           <div className="muted">
-            Sobald die App auf dem Gerät gestartet wird, verbindet sie sich automatisch und lädt ihren Stand hoch – dann erscheinen hier alle Daten.{' '}
-            <Link to="/geraet">Gerätestatus</Link>
+            Sobald die App auf diesem Gerät gestartet wird, verbindet sie sich automatisch und lädt ihren Stand hoch – dann erscheinen hier alle
+            Daten. <Link to="/geraete">Geräte</Link>
           </div>
         </div>
       </div>
@@ -94,12 +94,16 @@ export function PendingHints({ commands }: { commands: StoredCommand[] }) {
 }
 
 export function SyncHint() {
+  const { selectedDevice, activeDevices } = useApp()
+  const name = selectedDevice ? `„${selectedDevice.label}“` : 'das Gerät'
   return (
     <div className="banner info">
       <span aria-hidden>⟳</span>
       <div className="small">
-        Aufträge übernimmt das Gerät still beim nächsten Hintergrund-Sync (meist innerhalb von 1–15 Min.) – ohne Eintrag im
-        Protokoll der App. Die angezeigten Zahlen stammen immer aus dem letzten hochgeladenen Stand des Geräts.
+        Aufträge gelten nur für {name}
+        {activeDevices.length > 1 ? ' (jedes Gerät ist eine eigene Kasse)' : ''} und werden dort still beim nächsten Hintergrund-Sync
+        übernommen (meist innerhalb von 1–15 Min.) – ohne Eintrag im Protokoll der App. Die angezeigten Zahlen stammen immer aus dem
+        letzten hochgeladenen Stand dieses Geräts.
       </div>
     </div>
   )
@@ -144,8 +148,98 @@ export function SyncStatus() {
       </div>
       {status.snapshotFromPreviousDevice ? (
         <div className="banner warn small">
-          Angezeigt wird noch der Stand des vorherigen Geräts. Das neue Gerät lädt seinen Stand hoch, sobald es Daten hat – offene
-          Aufträge für das alte Gerät wurden beim Wechsel verworfen.
+          Angezeigt wird noch ein übernommener Stand eines früheren Geräts. Dieses Gerät ersetzt ihn beim nächsten Hochladen.
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+// ---- devices ----------------------------------------------------------------
+
+/** Joined within the last 24 hours. */
+export function isNewDevice(device: DeviceSummary) {
+  return Date.now() - new Date(device.pairedAt).getTime() < 24 * 3_600_000
+}
+
+export function DeviceDot({ device }: { device: DeviceSummary }) {
+  return <span className={`dot ${device.status === 'blocked' ? 'bad' : freshness(device.lastSeenAt)}`} />
+}
+
+/**
+ * Picks the device (= Kasse) every page and command form works on. Shown in
+ * the sidebar and the mobile top bar.
+ */
+export function DeviceSwitcher({ compact = false }: { compact?: boolean }) {
+  const { activeDevices, selectedDevice, selectDevice } = useApp()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: PointerEvent | KeyboardEvent) => {
+      if (event instanceof KeyboardEvent ? event.key === 'Escape' : !ref.current?.contains(event.target as Node)) setOpen(false)
+    }
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', close)
+    return () => {
+      window.removeEventListener('pointerdown', close)
+      window.removeEventListener('keydown', close)
+    }
+  }, [open])
+
+  if (activeDevices.length === 0) {
+    return compact ? null : (
+      <div className="device-switch empty">
+        <span className="dot bad" /> <span className="small muted">Kein Gerät verbunden</span>
+      </div>
+    )
+  }
+  const multiple = activeDevices.length > 1
+
+  return (
+    <div className={`device-switch ${compact ? 'compact' : ''}`} ref={ref}>
+      <button
+        type="button"
+        className="device-switch-button"
+        onClick={() => multiple && setOpen((value) => !value)}
+        aria-haspopup={multiple ? 'listbox' : undefined}
+        aria-expanded={multiple ? open : undefined}
+        disabled={!multiple}
+        title={multiple ? 'Gerät wechseln' : undefined}
+      >
+        {selectedDevice ? <DeviceDot device={selectedDevice} /> : null}
+        <span className="device-switch-text">
+          <span className="device-switch-label">{selectedDevice?.label ?? '–'}</span>
+          {compact ? null : <span className="device-switch-sub">zuletzt gesehen {relativeTime(selectedDevice?.lastSeenAt ?? null)}</span>}
+        </span>
+        {selectedDevice && selectedDevice.pendingCommands > 0 ? <span className="count">{selectedDevice.pendingCommands}</span> : null}
+        {multiple ? <span className="device-switch-caret" aria-hidden>▾</span> : null}
+      </button>
+      {open ? (
+        <div className="device-switch-menu" role="listbox" aria-label="Gerät wählen">
+          {activeDevices.map((device) => (
+            <button
+              key={device.id}
+              type="button"
+              role="option"
+              aria-selected={device.id === selectedDevice?.id}
+              className={device.id === selectedDevice?.id ? 'active' : ''}
+              onClick={() => {
+                selectDevice(device.id)
+                setOpen(false)
+              }}
+            >
+              <DeviceDot device={device} />
+              <span className="device-switch-text">
+                <span className="device-switch-label">
+                  {device.label} {isNewDevice(device) ? <span className="badge info">Neu</span> : null}
+                </span>
+                <span className="device-switch-sub">zuletzt gesehen {relativeTime(device.lastSeenAt)}</span>
+              </span>
+              {device.pendingCommands > 0 ? <span className="count" title="ausstehende Aufträge">{device.pendingCommands}</span> : null}
+            </button>
+          ))}
         </div>
       ) : null}
     </div>

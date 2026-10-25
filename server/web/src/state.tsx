@@ -2,13 +2,42 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { formatCurrency, formatDateTime, formatSignedCurrency } from '@/domain/format'
 
-import { api, ApiError, type EntryKind, type StoredCommand, type ServerStatus } from './api'
+import { api, ApiError, getApiDevice, setApiDevice, type DeviceSummary, type EntryKind, type ServerStatus, type StoredCommand } from './api'
 
 // ---- tiny router -----------------------------------------------------------
 
 const listeners = new Set<() => void>()
 
-export function navigate(to: string) {
+const DEVICE_PARAM = 'device'
+const DEVICE_STORAGE_KEY = 'schockboard.device'
+
+function readStoredDevice() {
+  try {
+    return window.localStorage.getItem(DEVICE_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+// The selection is applied before the first request: URL (?device=) wins over localStorage.
+setApiDevice(new URLSearchParams(window.location.search).get(DEVICE_PARAM) || readStoredDevice() || null)
+
+/** Adds (or removes) ?device=<selected> so links and reloads keep the device. */
+export function withDeviceParam(to: string) {
+  const url = new URL(to, window.location.origin)
+  const device = getApiDevice()
+  if (device) url.searchParams.set(DEVICE_PARAM, device)
+  else url.searchParams.delete(DEVICE_PARAM)
+  return url.pathname + url.search + url.hash
+}
+
+/** history.replaceState that keeps the device parameter. */
+export function replaceUrl(to: string) {
+  window.history.replaceState(null, '', withDeviceParam(to))
+}
+
+export function navigate(rawTo: string) {
+  const to = withDeviceParam(rawTo)
   if (to === window.location.pathname + window.location.search) return
   window.history.pushState(null, '', to)
   listeners.forEach((listener) => listener())
@@ -30,9 +59,11 @@ export function usePath() {
 }
 
 export function Link(props: { to: string; className?: string; children: ReactNode }) {
+  // Subscribes to the device selection so the href carries the current ?device=.
+  useContext(AppContext)
   return (
     <a
-      href={props.to}
+      href={withDeviceParam(props.to)}
       className={props.className}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return
@@ -50,6 +81,13 @@ export function Link(props: { to: string; className?: string; children: ReactNod
 type Toast = { id: number; message: string; kind: 'ok' | 'error' }
 
 type AppState = {
+  /** Selected device id (all pages and command forms use it). */
+  device: string | null
+  /** All devices incl. blocked ones. */
+  devices: DeviceSummary[]
+  activeDevices: DeviceSummary[]
+  selectedDevice: DeviceSummary | null
+  selectDevice: (deviceId: string) => void
   status: ServerStatus | null
   commands: StoredCommand[]
   pending: StoredCommand[]
@@ -74,6 +112,8 @@ export function useApp() {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<ServerStatus | null>(null)
+  const [device, setDevice] = useState<string | null>(() => getApiDevice())
+  const [devices, setDevices] = useState<DeviceSummary[]>([])
   const [commands, setCommands] = useState<StoredCommand[]>([])
   const [me, setMe] = useState<{ email: string; role: 'admin' | 'manager'; devNoAuth: boolean } | null>(null)
   const [revision, setRevision] = useState(0)
@@ -86,12 +126,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTimeout(() => setToasts((current) => current.filter((entry) => entry.id !== id)), 4200)
   }, [])
 
+  const applyDevice = useCallback((deviceId: string | null) => {
+    setApiDevice(deviceId)
+    try {
+      if (deviceId) window.localStorage.setItem(DEVICE_STORAGE_KEY, deviceId)
+      else window.localStorage.removeItem(DEVICE_STORAGE_KEY)
+    } catch {
+      // private mode
+    }
+    replaceUrl(window.location.pathname + window.location.search)
+    setDevice(deviceId)
+  }, [])
+
   const refresh = useCallback(async () => {
     try {
+      const nextDevices = await api<DeviceSummary[]>('/devices')
+      setDevices(nextDevices)
+      const active = nextDevices.filter((entry) => entry.status === 'active')
+      const current = getApiDevice()
+      // Unknown, blocked or no selection → first active device.
+      if (!current || !active.some((entry) => entry.id === current)) applyDevice(active[0]?.id ?? null)
+      const selected = getApiDevice()
       const [nextStatus, nextCommands] = await Promise.all([api<ServerStatus>('/status'), api<StoredCommand[]>('/commands')])
+      if (getApiDevice() !== selected) return // switched meanwhile; a newer refresh follows
       setStatus(nextStatus)
       setCommands(nextCommands)
-      const print = `${nextStatus.lastSnapshotAt}|${nextCommands.map((command) => `${command.id}:${command.status}`).join(',')}`
+      const print = `${selected}|${nextStatus.lastSnapshotAt}|${nextCommands.map((command) => `${command.id}:${command.status}`).join(',')}`
       if (print !== fingerprint.current) {
         fingerprint.current = print
         setRevision((value) => value + 1)
@@ -101,7 +161,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast(error.message, 'error')
       }
     }
-  }, [toast])
+  }, [toast, applyDevice])
+
+  const selectDevice = useCallback(
+    (deviceId: string) => {
+      if (deviceId === getApiDevice()) return
+      applyDevice(deviceId)
+      setStatus(null)
+      setCommands([])
+      void refresh()
+    },
+    [applyDevice, refresh]
+  )
 
   useEffect(() => {
     void refresh()
@@ -119,6 +190,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<AppState>(
     () => ({
+      device,
+      devices,
+      activeDevices: devices.filter((entry) => entry.status === 'active'),
+      selectedDevice: devices.find((entry) => entry.id === device) ?? null,
+      selectDevice,
       status,
       commands,
       pending: commands.filter((command) => command.status === 'pending'),
@@ -130,7 +206,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       refresh,
       toast,
     }),
-    [status, commands, me, revision, refresh, toast]
+    [device, devices, selectDevice, status, commands, me, revision, refresh, toast]
   )
 
   return (
@@ -150,18 +226,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
 // ---- data fetching ---------------------------------------------------------
 
 export function useApi<T>(path: string | null) {
-  const { revision } = useApp()
+  const { revision, device } = useApp()
   const [state, setState] = useState<{ data: T | null; error: ApiError | null; loading: boolean }>({
     data: null,
     error: null,
     loading: true,
   })
   const [nonce, setNonce] = useState(0)
+  const loadedFor = useRef(device)
 
   useEffect(() => {
     if (!path) return
     let alive = true
-    setState((current) => ({ ...current, loading: true }))
+    // Never show the previous device's numbers under another device.
+    const switched = loadedFor.current !== device
+    loadedFor.current = device
+    setState((current) => (switched ? { data: null, error: null, loading: true } : { ...current, loading: true }))
     api<T>(path).then(
       (data) => alive && setState({ data, error: null, loading: false }),
       (error: unknown) =>
@@ -175,7 +255,7 @@ export function useApi<T>(path: string | null) {
     return () => {
       alive = false
     }
-  }, [path, revision, nonce])
+  }, [path, revision, nonce, device])
 
   return { ...state, reload: () => setNonce((value) => value + 1) }
 }

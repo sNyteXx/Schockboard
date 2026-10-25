@@ -65,7 +65,7 @@ export function createApp(deps: AppDeps) {
   // Everything else (admin API and the web UI itself) sits behind Cloudflare Access.
   const adminAuth = createAdminAuth(config, deps.jwks)
   app.use('/api/admin/*', adminAuth)
-  app.route('/api/admin', adminRoutes({ config, store }))
+  app.route('/api/admin', adminRoutes({ config, store, snapshots }))
   app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404))
 
   const publicDir = config.publicDir

@@ -49,10 +49,13 @@ describe('device auth', () => {
     expect(status.lastSeenAt).toEqual(expect.any(String))
   })
 
-  it('re-pairing revokes the previous device', async () => {
+  it('pairing adds devices; each token stays valid until that device is blocked', async () => {
     server = await createTestServer()
     const first = await server.pair()
     const second = await server.pair()
+    expect((await server.device(first.token, '/api/device/ping')).status).toBe(200)
+    expect((await server.device(second.token, '/api/device/ping')).status).toBe(200)
+    await server.admin(`/api/admin/devices/${first.deviceId}/revoke`, { method: 'POST' })
     expect((await server.device(first.token, '/api/device/ping')).status).toBe(401)
     expect((await server.device(second.token, '/api/device/ping')).status).toBe(200)
   })
@@ -103,11 +106,12 @@ describe('snapshot upload', () => {
 
     const response = await upload(token, bytes)
     expect(response.status).toBe(200)
+    const deviceId = server.store.listActiveDevices()[0].id
     expect(await response.json()).toMatchObject({ ok: true, sizeBytes: bytes.length, schemaVersion: 6 })
 
     // raw image kept untouched, working copy switched to rollback journal
-    expect(fs.readFileSync(server.snapshots.rawFile)[18]).toBe(2)
-    expect(fs.readFileSync(server.snapshots.workFile)[18]).toBe(1)
+    expect(fs.readFileSync(server.snapshots.rawFile(deviceId))[18]).toBe(2)
+    expect(fs.readFileSync(server.snapshots.workFile(deviceId))[18]).toBe(1)
 
     const status = await (await server.admin('/api/admin/status')).json()
     expect(status).toMatchObject({ schemaVersion: 6, snapshotCreatedAt: '2026-10-24T10:00:00.000Z', snapshotSizeBytes: bytes.length })

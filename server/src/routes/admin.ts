@@ -17,8 +17,9 @@ import { COMMAND_TYPES, parseCommandPayload, type CommandType } from '@/remote/p
 
 import { requireAdmin, type AppEnv } from '../auth'
 import type { ServerConfig } from '../config'
-import { hasActiveDatabase, sqliteGet } from '../snapshot-client'
-import type { Store } from '../store'
+import type { SnapshotManager } from '../snapshot'
+import { sqliteGet } from '../snapshot-client'
+import { DeviceLimitError, type DeviceRow, type Store } from '../store'
 import { ENTRY_TABLES, entryKindOf, entryNotes, getCashboxChart, getEveningsChart, getPlayersChart, type EntryKind } from '../charts'
 
 const HISTORY_KINDS = ['all', 'loss', 'beerround', 'absence', 'payment', 'correction', 'audit'] as const
@@ -51,7 +52,8 @@ function sessionRow(sessionId: string) {
 }
 
 /** Plausibility checks against the latest snapshot. The device re-validates when applying. */
-function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown>, store: Store) {
+function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown>, store: Store, deviceId: string) {
+  const pending = () => store.listPendingCommands(deviceId)
   const requirePlayer = (playerId: unknown) => {
     if (typeof playerId !== 'string' || !playerExists(playerId)) {
       throw new CommandCheckError('Spieler existiert nicht (im letzten Datenstand).')
@@ -79,8 +81,7 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
     case 'player.create': {
       const name = String(payload.name).toLowerCase()
       const existing = sqliteGet<{ id: string }>('SELECT id FROM players WHERE lower(name) = $name LIMIT 1', { $name: name })
-      const queued = store
-        .listPendingCommands()
+      const queued = pending()
         .some((command) => command.type === 'player.create' && String(command.payload.name).toLowerCase() === name)
       if (existing || queued) {
         throw new CommandCheckError('Ein Spieler mit diesem Namen existiert bereits oder ist schon beauftragt.')
@@ -98,7 +99,7 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
         { $id: String(payload.entryId), $sessionId: session.id, $playerId: String(payload.playerId) }
       )
       if (!entry) throw new CommandCheckError('Eintrag existiert nicht (mehr) in diesem Spielabend.')
-      if (pendingDeleteOf('loss', String(payload.entryId), store)) {
+      if (pendingDeleteOf('loss', String(payload.entryId), pending())) {
         throw new CommandCheckError('Für diesen Eintrag ist bereits eine Löschung beauftragt.')
       }
       return
@@ -106,7 +107,7 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
     case 'entry.delete': {
       const kind = payload.kind as EntryKind
       requireEntry(kind, String(payload.entryId))
-      if (pendingDeleteOf(kind, String(payload.entryId), store)) {
+      if (pendingDeleteOf(kind, String(payload.entryId), pending())) {
         throw new CommandCheckError('Für diese Buchung ist bereits eine Löschung beauftragt.')
       }
       return
@@ -124,7 +125,7 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
       if (kind === 'correction' && payload.note !== undefined && !payload.note) {
         throw new CommandCheckError('Korrekturen brauchen einen Grund.')
       }
-      if (pendingDeleteOf(kind, String(payload.entryId), store)) {
+      if (pendingDeleteOf(kind, String(payload.entryId), pending())) {
         throw new CommandCheckError('Diese Buchung wird bereits gelöscht.')
       }
       return
@@ -136,8 +137,7 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
         $name: name,
         $id: String(payload.playerId),
       })
-      const queued = store
-        .listPendingCommands()
+      const queued = pending()
         .some(
           (command) =>
             (command.type === 'player.create' || (command.type === 'player.rename' && command.payload.playerId !== payload.playerId)) &&
@@ -172,8 +172,7 @@ function checkAgainstSnapshot(type: CommandType, payload: Record<string, unknown
     }
     case 'session.delete': {
       if (!sessionRow(String(payload.sessionId))) throw new CommandCheckError('Spielabend existiert nicht (im letzten Datenstand).')
-      const duplicate = store
-        .listPendingCommands()
+      const duplicate = pending()
         .some((command) => command.type === 'session.delete' && command.payload.sessionId === payload.sessionId)
       if (duplicate) throw new CommandCheckError('Für diesen Abend ist bereits eine Löschung beauftragt.')
       return
@@ -187,10 +186,8 @@ function requireEntry(kind: EntryKind, entryId: string) {
 }
 
 /** A pending delete of the booking, via entry.delete or (for losses) loss.void. */
-function pendingDeleteOf(kind: EntryKind, entryId: string, store: Store) {
-  return store
-    .listPendingCommands()
-    .some(
+function pendingDeleteOf(kind: EntryKind, entryId: string, pending: ReturnType<Store['listPendingCommands']>) {
+  return pending.some(
       (command) =>
         command.payload.entryId === entryId &&
         ((command.type === 'entry.delete' && command.payload.kind === kind) || (kind === 'loss' && command.type === 'loss.void'))
@@ -211,9 +208,38 @@ function withEntryRefs(entries: HistoryEntry[]) {
   })
 }
 
-export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
-  const { config, store } = deps
+const DEVICE_HEADER = 'x-schockboard-device'
+
+const labelSchema = z.object({ label: z.string().trim().min(1).max(60) })
+const revokeSchema = z.object({ replacedBy: z.string().min(1).max(80).optional() }).optional()
+
+type DeviceChoice = { device: DeviceRow } | { error: 'device_not_found' } | { device: null }
+
+export function adminRoutes(deps: { config: ServerConfig; store: Store; snapshots: SnapshotManager }) {
+  const { config, store, snapshots } = deps
   const app = new Hono<AppEnv>()
+
+  /**
+   * Device the request is about: `?device=<id>` or `X-Schockboard-Device`,
+   * else the first active device. Unknown or blocked ids are a 404.
+   */
+  function chooseDevice(c: Context<AppEnv>): DeviceChoice {
+    const requested = (c.req.query('device') ?? c.req.header(DEVICE_HEADER) ?? '').trim()
+    if (!requested) return { device: store.getDefaultDevice() }
+    const device = store.getDevice(requested)
+    if (!device || device.revokedAt) return { error: 'device_not_found' }
+    return { device }
+  }
+
+  const deviceNotFound = (c: Context) => c.json({ error: 'device_not_found', message: 'Gerät unbekannt oder gesperrt.' }, 404)
+
+  /** Resolves the device or answers 404/409 itself. */
+  function requireDevice(c: Context<AppEnv>): DeviceRow | Response {
+    const choice = chooseDevice(c)
+    if ('error' in choice) return deviceNotFound(c)
+    if (!choice.device) return c.json({ error: 'no_snapshot', message: 'Noch kein Gerät verbunden.' }, 409)
+    return choice.device
+  }
 
   app.use('*', bodyLimit({ maxSize: 32 * 1024, onError: (c) => c.json({ error: 'payload_too_large' }, 413) }))
   app.use('*', async (c, next) => {
@@ -223,53 +249,126 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
 
   app.get('/me', (c) => c.json({ email: c.get('adminEmail'), role: c.get('role'), devNoAuth: config.devNoAuth }))
 
-  // Device management is admin-only; managers handle data and overrides.
+  // Device management is admin-only; managers handle data and overrides (and may list devices).
   app.use('/device/*', requireAdmin)
+  app.use('/devices/*', async (c, next) => (c.req.method === 'GET' ? next() : requireAdmin(c, next)))
 
   app.get('/status', (c) => {
-    const device = store.getActiveDevice()
-    const snapshot = store.getSnapshotMeta()
+    const choice = chooseDevice(c)
+    if ('error' in choice) return deviceNotFound(c)
+    const device = choice.device
+    const snapshot = device ? store.getSnapshotMeta(device.id) : null
+    const devices = store.listDevices()
     return c.json({
       paired: device !== null,
-      pairedAt: device?.pairedAt ?? null,
+      deviceId: device?.id ?? null,
+      label: device?.label ?? null,
+      /** Legacy: 'app: <enrolled name>'. */
       deviceLabel: device?.pairedBy ?? null,
-      enrollmentOpenUntil: store.enrollmentOpenUntil(),
+      deviceName: device?.deviceName ?? null,
+      pairedAt: device?.pairedAt ?? null,
       lastSeenAt: device?.lastSeenAt ?? null,
       lastSnapshotAt: snapshot?.receivedAt ?? null,
       snapshotCreatedAt: snapshot?.createdAt ?? null,
       schemaVersion: snapshot?.schemaVersion ?? null,
       snapshotSizeBytes: snapshot?.sizeBytes ?? null,
-      // True until the current device has uploaded its own first snapshot.
+      // Only for a snapshot migrated from the single-device layout that another (old) device uploaded.
       snapshotFromPreviousDevice: Boolean(device && snapshot?.deviceId && snapshot.deviceId !== device.id),
-      pendingCommands: store.countPendingCommands(),
+      pendingCommands: device ? store.countPendingCommands(device.id) : 0,
       publicOrigin: config.publicOrigin,
+      maxDevices: config.maxDevices,
+      activeDevices: devices.filter((entry) => entry.status === 'active').length,
+      devices,
     })
   })
 
-  // Manual fallback (tests, scripted setups); the app normally enrolls itself.
+  // ---- device management -------------------------------------------------
+
+  app.get('/devices', (c) => c.json(store.listDevices()))
+
+  /** Kasse/offen of every active device with a snapshot (overview strip). */
+  app.get('/devices/cashbox', (c) =>
+    c.json(
+      store.listActiveDevices().map((device) => {
+        if (!snapshots.has(device.id)) return { deviceId: device.id, label: device.label, cashbox: null, cashboxLabel: null }
+        return snapshots.withDevice(device.id, () => ({
+          deviceId: device.id,
+          label: device.label,
+          cashbox: getCashboxSummary(),
+          cashboxLabel: getAppSettings().cashboxLabel,
+        }))
+      })
+    )
+  )
+
+  app.patch('/devices/:id', async (c) => {
+    const parsed = labelSchema.safeParse(await c.req.json().catch(() => null))
+    if (!parsed.success) return c.json({ error: 'invalid_request', message: 'Name: 1–60 Zeichen.' }, 400)
+    if (!store.renameDevice(c.req.param('id'), parsed.data.label)) return c.json({ error: 'not_found' }, 404)
+    return c.json(store.listDevices().find((device) => device.id === c.req.param('id')))
+  })
+
+  /**
+   * Blocks a device: token invalid, pending commands cancelled. With
+   * `replacedBy`, that (active) device takes over the blocked one's name.
+   * A blocked app may enroll itself again – as a new device.
+   */
+  app.post('/devices/:id/revoke', async (c) => {
+    const id = c.req.param('id')
+    const body = revokeSchema.safeParse(await c.req.json().catch(() => undefined))
+    if (!body.success) return c.json({ error: 'invalid_request' }, 400)
+    const device = store.getDevice(id)
+    if (!device) return c.json({ error: 'not_found' }, 404)
+    const replacedBy = body.data?.replacedBy
+    if (replacedBy) {
+      const successor = store.getDevice(replacedBy)
+      if (!successor || successor.revokedAt || successor.id === id) {
+        return c.json({ error: 'invalid_request', message: 'Ersatzgerät unbekannt oder gesperrt.' }, 400)
+      }
+    }
+    const result = store.revokeDevice(id, replacedBy ? 'Gerät ersetzt' : 'Gerät gesperrt')
+    if (replacedBy && result.revoked && device.label) store.renameDevice(replacedBy, device.label)
+    return c.json({ ok: true as const, ...result })
+  })
+
+  /** Removes a blocked device from the list incl. its snapshot and command history. */
+  app.delete('/devices/:id', (c) => {
+    const id = c.req.param('id')
+    const device = store.getDevice(id)
+    if (!device) return c.json({ error: 'not_found' }, 404)
+    if (!device.revokedAt) return c.json({ error: 'device_active', message: 'Nur gesperrte Geräte können entfernt werden.' }, 409)
+    store.deleteDevice(id)
+    snapshots.remove(id)
+    return c.json({ ok: true as const })
+  })
+
+  // Manual fallback (tests, scripted setups): adds a device; the app normally enrolls itself.
   app.post('/device/pair', (c) => {
-    const { token, pairedAt } = store.pairDevice(c.get('adminEmail'))
-    return c.json({ token, pairedAt, server: config.publicOrigin })
+    try {
+      const { id, token, pairedAt } = store.addDevice({ pairedBy: c.get('adminEmail'), deviceName: 'Manuell gekoppelt', maxDevices: config.maxDevices })
+      return c.json({ deviceId: id, token, pairedAt, server: config.publicOrigin })
+    } catch (error) {
+      if (error instanceof DeviceLimitError) return c.json({ error: 'device_limit', message: `Höchstens ${error.max} aktive Geräte.` }, 403)
+      throw error
+    }
   })
 
-  /** Lets a new or reinstalled app enroll itself within the next minutes. */
-  app.post('/device/enrollment', (c) => c.json({ enrollmentOpenUntil: store.openEnrollment(10) }))
-
-  app.delete('/device/enrollment', (c) => {
-    store.closeEnrollment()
-    return c.json({ ok: true as const })
-  })
-
+  /** Legacy: blocks the selected (default: first active) device. */
   app.post('/device/revoke', (c) => {
-    store.revokeActiveDevice()
-    return c.json({ ok: true as const })
+    const choice = chooseDevice(c)
+    if ('error' in choice) return deviceNotFound(c)
+    const result = choice.device ? store.revokeDevice(choice.device.id) : { revoked: false, cancelled: 0 }
+    return c.json({ ok: true as const, ...result })
   })
 
-  // ---- reads from the latest snapshot (the app's own queries) -----------
+  // ---- reads from the selected device's latest snapshot (the app's own queries) -----------
 
+  /** Runs a synchronous read with the selected device's snapshot as the app database. */
   const read = <T>(handler: (c: Context<AppEnv>) => T) => (c: Context<AppEnv>) => {
-    if (!hasActiveDatabase()) return noSnapshot(c)
-    const result = handler(c)
+    const device = requireDevice(c)
+    if (device instanceof Response) return device
+    if (!snapshots.has(device.id)) return noSnapshot(c)
+    const result = snapshots.withDevice(device.id, () => handler(c))
     if (result instanceof Response) return result
     return c.json(result as object)
   }
@@ -325,9 +424,15 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
   app.get('/charts/players', read(() => getPlayersChart()))
   app.get('/charts/cashbox', read(() => getCashboxChart()))
 
-  // ---- command queue -----------------------------------------------------
+  // ---- command queue (per device) -----------------------------------------
 
-  app.get('/commands', (c) => c.json(store.listCommands()))
+  /** `?device=all` lists every device's commands. */
+  app.get('/commands', (c) => {
+    if (c.req.query('device') === 'all') return c.json(store.listCommands(null))
+    const device = requireDevice(c)
+    if (device instanceof Response) return device.status === 409 ? c.json([]) : device
+    return c.json(store.listCommands(device.id))
+  })
 
   app.post('/commands', async (c) => {
     let json: unknown
@@ -352,9 +457,11 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
       )
     }
 
-    if (!hasActiveDatabase()) return noSnapshot(c)
+    const device = requireDevice(c)
+    if (device instanceof Response) return device
+    if (!snapshots.has(device.id)) return noSnapshot(c)
     try {
-      checkAgainstSnapshot(request.data.type, payload, store)
+      snapshots.withDevice(device.id, () => checkAgainstSnapshot(request.data.type, payload, store, device.id))
     } catch (error) {
       if (error instanceof CommandCheckError) {
         return c.json({ error: 'command_rejected', message: error.message }, 422)
@@ -362,12 +469,20 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store }) {
       throw error
     }
 
-    const command = store.createCommand({ type: request.data.type, payload, createdBy: c.get('adminEmail') })
+    const command = store.createCommand({ deviceId: device.id, type: request.data.type, payload, createdBy: c.get('adminEmail') })
     return c.json(command, 201)
   })
 
-  /** Clears the command history: every finished command is deleted, pending ones stay. */
-  app.delete('/commands', (c) => c.json({ ok: true as const, deleted: store.deleteFinishedCommands() }))
+  /**
+   * Clears the command history of the selected device (`?device=all`: of every
+   * device): finished commands are deleted, pending ones stay.
+   */
+  app.delete('/commands', (c) => {
+    if (c.req.query('device') === 'all') return c.json({ ok: true as const, deleted: store.deleteFinishedCommands(null) })
+    const choice = chooseDevice(c)
+    if ('error' in choice) return deviceNotFound(c)
+    return c.json({ ok: true as const, deleted: choice.device ? store.deleteFinishedCommands(choice.device.id) : 0 })
+  })
 
   app.delete('/commands/:id', (c) => {
     const id = c.req.param('id')

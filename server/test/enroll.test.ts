@@ -10,58 +10,68 @@ afterEach(() => {
   server = null
 })
 
-function enroll(target: TestServer, deviceName = 'Pixel Tablet') {
-  return target.app.request('/api/device/enroll', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ deviceName }),
-  })
-}
-
 describe('automatic device enrollment', () => {
-  it('lets exactly the first device enroll itself, then closes', async () => {
+  it('lets every app enroll itself as a new device, labelled with its device name', async () => {
     server = await createTestServer()
-    const first = await enroll(server)
+    const first = await server.enroll('Pixel Tablet')
     expect(first.status).toBe(200)
-    const { token } = (await first.json()) as { token: string }
-    expect((await server.device(token, '/api/device/ping')).status).toBe(200)
+    expect((await server.device(first.body.token, '/api/device/ping')).status).toBe(200)
 
-    expect((await enroll(server, 'Fremdgerät')).status).toBe(403)
-    const status = (await (await server.admin('/api/admin/status')).json()) as { deviceLabel: string; enrollmentOpenUntil: string | null }
-    expect(status).toMatchObject({ deviceLabel: 'app: Pixel Tablet', enrollmentOpenUntil: null })
+    const second = await server.enroll('Handy Mike')
+    expect(second.status).toBe(200)
+    expect(second.body.deviceId).not.toBe(first.body.deviceId)
+    // the first device stays valid
+    expect((await server.device(first.body.token, '/api/device/ping')).status).toBe(200)
+
+    const devices = (await (await server.admin('/api/admin/devices')).json()) as Array<{ id: string; label: string; status: string }>
+    expect(devices.map((device) => [device.label, device.status])).toEqual([
+      ['Pixel Tablet', 'active'],
+      ['Handy Mike', 'active'],
+    ])
+    const status = await (await server.admin('/api/admin/status')).json()
+    expect(status).toMatchObject({ deviceLabel: 'app: Pixel Tablet', label: 'Pixel Tablet', activeDevices: 2 })
   })
 
-  it('accepts a replacement device only inside the admin window and revokes the old one', async () => {
+  it('refuses enrollment beyond MAX_DEVICES active devices; blocked ones do not count', async () => {
+    server = await createTestServer({ maxDevices: 2 })
+    const a = await server.enroll('A')
+    await server.enroll('B')
+    const refused = await server.enroll('C')
+    expect(refused.status).toBe(403)
+    expect(refused.body.error).toBe('device_limit')
+
+    await server.admin(`/api/admin/devices/${a.body.deviceId}/revoke`, { method: 'POST' })
+    expect((await server.enroll('C')).status).toBe(200)
+  })
+
+  it('rate-limits enrollment per client IP (CF-Connecting-IP)', async () => {
+    server = await createTestServer({ enrollLimitPerMinute: 2, enrollLimitPerDay: 3 })
+    const ip = { 'CF-Connecting-IP': '203.0.113.7' }
+    expect((await server.enroll('1', ip)).status).toBe(200)
+    expect((await server.enroll('2', ip)).status).toBe(200)
+    expect((await server.enroll('3', ip)).status).toBe(429)
+    // another client is not affected
+    expect((await server.enroll('4', { 'CF-Connecting-IP': '203.0.113.8' })).status).toBe(200)
+  })
+
+  it('a blocked app loses its token and may re-enroll as a new device', async () => {
     server = await createTestServer()
-    const { token: oldToken } = (await (await enroll(server)).json()) as { token: string }
+    const old = await server.enroll('Tablet')
     await server.admin('/api/admin/device/revoke', { method: 'POST' })
-    expect((await server.device(oldToken, '/api/device/ping')).status).toBe(401)
-    expect((await enroll(server, 'Neues Tablet')).status).toBe(403) // revoke alone does not reopen
+    expect((await server.device(old.body.token, '/api/device/ping')).status).toBe(401)
 
-    await server.admin('/api/admin/device/enrollment', { method: 'POST' })
-    const replacement = await enroll(server, 'Neues Tablet')
-    expect(replacement.status).toBe(200)
-    expect((await enroll(server, 'Noch eins')).status).toBe(403)
+    const again = await server.enroll('Tablet')
+    expect(again.status).toBe(200)
+    expect(again.body.deviceId).not.toBe(old.body.deviceId)
+    const devices = (await (await server.admin('/api/admin/devices')).json()) as Array<{ id: string; status: string }>
+    expect(devices.map((device) => [device.id, device.status])).toEqual([
+      [again.body.deviceId, 'active'],
+      [old.body.deviceId, 'blocked'],
+    ])
   })
-})
 
-describe('device switch', () => {
-  it('cancels commands queued for the previous device', async () => {
-    const target = await createTestServer()
-    try {
-      const enrollOnce = (name: string) =>
-        target.app.request('/api/device/enroll', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceName: name }) })
-      await enrollOnce('Altes Tablet')
-      target.store.db
-        .prepare("INSERT INTO commands (id, type, payload_json, status, created_at, created_by) VALUES ('c1', 'audit.purge', '{}', 'pending', 'x', 'admin')")
-        .run()
-      await target.admin('/api/admin/device/enrollment', { method: 'POST' })
-      await enrollOnce('Neues Tablet')
-
-      const row = target.store.db.prepare("SELECT status, error FROM commands WHERE id = 'c1'").get() as { status: string; error: string }
-      expect(row).toEqual({ status: 'cancelled', error: 'Gerät gewechselt' })
-    } finally {
-      target.cleanup()
-    }
+  it('admin enrollment window endpoints are gone', async () => {
+    server = await createTestServer()
+    expect((await server.admin('/api/admin/device/enrollment', { method: 'POST' })).status).toBe(404)
   })
 })

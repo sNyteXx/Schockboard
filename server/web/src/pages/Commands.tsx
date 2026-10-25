@@ -16,7 +16,8 @@ const FILTERS = [
 ] as const
 
 export function CommandsPage() {
-  const { commands, status, refresh, toast } = useApp()
+  const { commands, status, refresh, toast, selectedDevice, activeDevices } = useApp()
+  const [clearAll, setClearAll] = useState(false)
   const players = useApi<Player[]>('/players')
   const sessions = useApi<SessionOverview[]>('/sessions')
   const [confirmClear, setConfirmClear] = useState(false)
@@ -26,7 +27,7 @@ export function CommandsPage() {
   async function clearHistory() {
     setBusy('clear')
     try {
-      const result = await api<{ deleted: number }>('/commands', { method: 'DELETE' })
+      const result = await api<{ deleted: number }>(clearAll ? '/commands?device=all' : '/commands', { method: 'DELETE' })
       toast(`${result.deleted} abgeschlossene Aufträge gelöscht.`)
       setConfirmClear(false)
     } catch (error) {
@@ -56,12 +57,15 @@ export function CommandsPage() {
   }
 
   return (
-    <Page eyebrow="Warteschlange" title="Aufträge" actions={
+    <Page eyebrow={selectedDevice ? `Warteschlange · ${selectedDevice.label}` : 'Warteschlange'} title="Aufträge" actions={
         <>
           <button className="btn ghost" onClick={() => void refresh()}>
             Aktualisieren
           </button>
-          <button className="btn danger" disabled={finishedCount === 0} onClick={() => setConfirmClear(true)}>
+          <button className="btn danger" disabled={finishedCount === 0} onClick={() => {
+            setClearAll(false)
+            setConfirmClear(true)
+          }}>
             Auftragsverlauf leeren
           </button>
         </>
@@ -118,9 +122,16 @@ export function CommandsPage() {
         <Modal title="Auftragsverlauf leeren?" onClose={() => setConfirmClear(false)} tone="danger">
           <div className="stack">
             <div>
-              {finishedCount} abgeschlossene Aufträge (übernommen, abgelehnt, storniert) werden vom Server gelöscht. Ausstehende Aufträge bleiben
-              erhalten.
+              {clearAll
+                ? 'Alle abgeschlossenen Aufträge (übernommen, abgelehnt, storniert) aller Geräte'
+                : `${finishedCount} abgeschlossene Aufträge (übernommen, abgelehnt, storniert) von „${selectedDevice?.label ?? 'diesem Gerät'}“`}{' '}
+              werden vom Server gelöscht. Ausstehende Aufträge bleiben erhalten.
             </div>
+            {activeDevices.length > 1 ? (
+              <label className="checkbox">
+                <input type="checkbox" checked={clearAll} onChange={(event) => setClearAll(event.target.checked)} /> Verlauf aller Geräte leeren
+              </label>
+            ) : null}
             <div className="banner error small">
               Danach lässt sich im Web nicht mehr nachvollziehen oder rückgängig machen, was beauftragt wurde.
             </div>

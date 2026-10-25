@@ -1,16 +1,50 @@
 import { formatCurrency, formatDate, formatDateTime } from '@/domain/format'
 
-import type { CashboxChart, DashboardSnapshot, EveningsChart, HistoryRow, PlayerChartRow, SessionOverview } from '../api'
+import type { CashboxChart, DashboardSnapshot, DeviceCashbox, EveningsChart, HistoryRow, PlayerChartRow, SessionOverview } from '../api'
 import { Donut } from '../charts/Donut'
 import { LineChart } from '../charts/LineChart'
 import { RankingBars } from '../charts/RankingBars'
 import { ACCENT } from '../charts/scale'
 import { playerDebtSeries, totalDebtValues } from '../charts/series'
 import { Sparkline } from '../charts/Sparkline'
-import { Card, ErrorView, Loading, Money, Page, PendingHints, SyncHint, SyncStatus } from '../components'
+import { Card, DeviceDot, ErrorView, isNewDevice, Loading, Money, Page, PendingHints, relativeTime, SyncHint, SyncStatus } from '../components'
 import { RenamePendingBadges } from '../overrides'
 import { Link, navigate, pendingForPlayer, useApi, useApp } from '../state'
 import { HistoryList } from './History'
+
+/** All devices at a glance (only with more than one): each one is its own Kasse. */
+function DeviceStrip() {
+  const { activeDevices, device: selected, selectDevice } = useApp()
+  const strip = useApi<DeviceCashbox[]>(activeDevices.length > 1 ? '/devices/cashbox' : null)
+  if (activeDevices.length < 2) return null
+  const byId = new Map((strip.data ?? []).map((entry) => [entry.deviceId, entry]))
+  return (
+    <div className="device-strip" aria-label="Alle Geräte">
+      {activeDevices.map((device) => {
+        const entry = byId.get(device.id)
+        return (
+          <button key={device.id} type="button" className={device.id === selected ? 'active' : ''} onClick={() => selectDevice(device.id)}>
+            <span className="row" style={{ gap: 8 }}>
+              <DeviceDot device={device} />
+              <strong>{device.label}</strong>
+              {isNewDevice(device) ? <span className="badge info">Neu</span> : null}
+              {device.pendingCommands > 0 ? <span className="count" title="ausstehende Aufträge">{device.pendingCommands}</span> : null}
+            </span>
+            {entry?.cashbox ? (
+              <span className="small">
+                {entry.cashboxLabel ?? 'Kasse'} <strong>{formatCurrency(entry.cashbox.totalPaymentsCents)}</strong> · offen{' '}
+                <strong style={{ color: 'var(--accent)' }}>{formatCurrency(entry.cashbox.totalOutstandingCents)}</strong>
+              </span>
+            ) : (
+              <span className="small muted">{strip.loading ? '…' : 'noch kein Datenstand'}</span>
+            )}
+            <span className="small muted">Stand {relativeTime(device.lastSnapshotAt)}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 export function DashboardPage() {
   const { pending } = useApp()
@@ -28,6 +62,7 @@ export function DashboardPage() {
 
   return (
     <Page eyebrow="Echte Liebe" title="Übersicht">
+      <DeviceStrip />
       <Card title="Sync-Status">
         <div className="grid cols-2" style={{ alignItems: 'center' }}>
           <SyncStatus />

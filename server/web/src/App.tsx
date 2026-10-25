@@ -2,6 +2,7 @@ import { Link, useApp, usePath } from './state'
 import { BookingPage } from './pages/Booking'
 import { CommandsPage } from './pages/Commands'
 import { DashboardPage } from './pages/Dashboard'
+import { DeviceSwitcher } from './components'
 import { DevicePage } from './pages/Device'
 import { HistoryPage } from './pages/History'
 import { PlayersPage } from './pages/Players'
@@ -16,7 +17,7 @@ const NAV = [
   { to: '/buchen', label: 'Buchen' },
   { to: '/auftraege', label: 'Aufträge', badge: true },
   { to: '/einstellungen', label: 'Einstellungen' },
-  { to: '/geraet', label: 'Gerät' },
+  { to: '/geraete', label: 'Geräte' },
 ]
 
 function isActive(path: string, to: string) {
@@ -41,6 +42,7 @@ function Route({ path }: { path: string }) {
       return <CommandsPage />
     case '/einstellungen':
       return <SettingsPage />
+    case '/geraete':
     case '/geraet':
       return <DevicePage />
     default:
@@ -77,6 +79,7 @@ export function App() {
             <div className="brand-sub">Verwaltung</div>
           </div>
         </div>
+        <DeviceSwitcher />
         <nav className="nav">{links()}</nav>
         <div className="sidebar-foot">
           {devNoAuth ? <div className="badge danger" style={{ marginBottom: 8 }}>DEV – ohne Anmeldung</div> : null}
@@ -96,6 +99,7 @@ export function App() {
           <div className="brand-title">Schockboard</div>
           {devNoAuth ? <span className="badge danger">DEV</span> : null}
           {role ? <span className={`badge ${role === 'admin' ? 'yellow' : 'info'}`}>{role === 'admin' ? 'Admin' : 'Verwalter'}</span> : null}
+          <DeviceSwitcher compact />
         </header>
         <nav className="mobile-nav">{links()}</nav>
         <main className="main">

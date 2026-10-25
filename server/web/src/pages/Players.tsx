@@ -7,7 +7,7 @@ import { LineChart } from '../charts/LineChart'
 import { ACCENT } from '../charts/scale'
 import { Card, ErrorView, Loading, Money, Page, PendingHints, SyncHint } from '../components'
 import { Drawer, RenameDialog, RenamePendingBadges } from '../overrides'
-import { Link, pendingForPlayer, useApi, useApp } from '../state'
+import { Link, pendingForPlayer, replaceUrl, useApi, useApp } from '../state'
 
 const EVENT_LABELS = { evening: 'Abend', payment: 'Zahlung', correction: 'Korrektur' } as const
 
@@ -114,7 +114,7 @@ export function PlayersPage() {
 
   function setOpenPlayer(id: string | null) {
     setOpenPlayerState(id)
-    window.history.replaceState(null, '', id ? `/spieler?spieler=${encodeURIComponent(id)}` : '/spieler')
+    replaceUrl(id ? `/spieler?spieler=${encodeURIComponent(id)}` : '/spieler')
   }
 
   const debtById = new Map((debts.data ?? []).map((row) => [row.playerId, row]))

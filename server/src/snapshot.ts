@@ -2,10 +2,17 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
-import { resetBootstrapFlag } from '@/db/bootstrap'
+import { ensureDatabaseReady, resetBootstrapFlag } from '@/db/bootstrap'
 import { findMissingSchemaObjects, withRollbackJournalHeader } from '@/domain/backup-validation'
 
-import { getActiveRawDatabase, setActiveDatabase } from './snapshot-client'
+import {
+  getActiveRawDatabase,
+  NoSnapshotError,
+  setActiveDatabase,
+  withSelectedDatabase,
+  wrapDatabase,
+  type SqliteAdapter,
+} from './snapshot-client'
 
 const SQLITE_HEADER = 'SQLite format 3\0'
 
@@ -78,80 +85,157 @@ function inspectDatabase(file: string) {
   }
 }
 
+const DEVICE_ID = /^dev_[A-Za-z0-9_-]{1,64}$/
+
+function assertDeviceId(deviceId: string) {
+  if (!DEVICE_ID.test(deviceId)) throw new Error(`invalid device id: ${deviceId}`)
+}
+
+type OpenSnapshot = { adapter: SqliteAdapter; bootstrapped: boolean }
+
 /**
- * Owns `snapshot.sqlite` (raw image exactly as uploaded) and
- * `snapshot-work.sqlite` (a private working copy the app queries run on).
+ * Owns one snapshot per device under `DATA_DIR/snapshots/`:
+ * `<deviceId>.sqlite` (raw image exactly as uploaded) and
+ * `<deviceId>-work.sqlite` (a private working copy the app queries run on).
  * The working copy may be touched by the app's idempotent bootstrap; it is
- * rebuilt from the raw image on each upload and on startup, and nothing in
- * it ever travels back to the device.
+ * rebuilt from the raw image on each upload and on first use after startup,
+ * and nothing in it ever travels back to the device.
+ *
+ * Opened working copies are cached per device. `withDevice` selects one for
+ * the app queries for the duration of a synchronous callback.
  */
 export function createSnapshotManager(dataDir: string) {
-  const rawFile = path.join(dataDir, 'snapshot.sqlite')
-  const workFile = path.join(dataDir, 'snapshot-work.sqlite')
+  const dir = path.join(dataDir, 'snapshots')
+  const cache = new Map<string, OpenSnapshot>()
 
-  function activate(file: string) {
-    const db = new DatabaseSync(file)
-    db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 2000;')
-    const previous = getActiveRawDatabase()
-    setActiveDatabase(db)
-    resetBootstrapFlag()
-    if (previous && previous !== db) {
-      try {
-        previous.close()
-      } catch {
-        // already closed
-      }
+  const rawFile = (deviceId: string) => {
+    assertDeviceId(deviceId)
+    return path.join(dir, `${deviceId}.sqlite`)
+  }
+  const workFile = (deviceId: string) => {
+    assertDeviceId(deviceId)
+    return path.join(dir, `${deviceId}-work.sqlite`)
+  }
+
+  function ensureDir() {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+
+  function closeCached(deviceId: string) {
+    const entry = cache.get(deviceId)
+    cache.delete(deviceId)
+    if (getActiveRawDatabase() === entry?.adapter.raw) setActiveDatabase(null)
+    try {
+      entry?.adapter.closeSync()
+    } catch {
+      // already closed
     }
   }
 
-  function deactivate() {
-    const previous = getActiveRawDatabase()
-    setActiveDatabase(null)
-    resetBootstrapFlag()
-    previous?.close()
+  function openWork(deviceId: string, file: string) {
+    const db = new DatabaseSync(file)
+    db.exec('PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 2000;')
+    const entry: OpenSnapshot = { adapter: wrapDatabase(db), bootstrapped: false }
+    cache.set(deviceId, entry)
+    return entry
+  }
+
+  /** Cached working copy; rebuilt from the raw image on first use. */
+  function open(deviceId: string): OpenSnapshot | null {
+    const cached = cache.get(deviceId)
+    if (cached) return cached
+    const raw = rawFile(deviceId)
+    if (!fs.existsSync(raw)) return null
+    const work = workFile(deviceId)
+    removeQuietly(work)
+    writeFileAtomic(work, withRollbackJournalHeader(fs.readFileSync(raw)))
+    return openWork(deviceId, work)
   }
 
   return {
+    dir,
     rawFile,
     workFile,
 
-    /** Rebuilds the working copy from the stored raw image (startup). */
-    loadExisting() {
-      if (!fs.existsSync(rawFile)) return false
-      const bytes = fs.readFileSync(rawFile)
-      deactivate()
-      removeQuietly(workFile)
-      writeFileAtomic(workFile, withRollbackJournalHeader(bytes))
-      activate(workFile)
-      return true
+    has(deviceId: string) {
+      return cache.has(deviceId) || fs.existsSync(rawFile(deviceId))
     },
 
     /**
-     * Validates and installs a new image. Throws SnapshotValidationError
-     * without touching the current snapshot if the upload is unusable.
+     * Runs `task` with the device's working copy as the database for the
+     * app queries (`getSqlite()`). Throws NoSnapshotError without one.
      */
-    install(bytes: Uint8Array, maxBytes: number) {
-      assertSqliteImage(bytes, maxBytes)
-      const workBytes = withRollbackJournalHeader(bytes)
+    withDevice<T>(deviceId: string, task: () => T): T {
+      const entry = open(deviceId)
+      if (!entry) throw new NoSnapshotError()
+      return withSelectedDatabase(entry.adapter, () => {
+        if (!entry.bootstrapped) {
+          // The app's bootstrap flag is global; run it once per opened copy.
+          resetBootstrapFlag()
+          ensureDatabaseReady()
+          entry.bootstrapped = true
+        }
+        return task()
+      })
+    },
 
-      const candidate = path.join(dataDir, `snapshot-candidate.${process.pid}.${Date.now()}.sqlite`)
+    /**
+     * Validates and installs a new image for one device. Throws
+     * SnapshotValidationError without touching the current snapshot if the
+     * upload is unusable.
+     */
+    install(deviceId: string, bytes: Uint8Array, maxBytes: number) {
+      assertSqliteImage(bytes, maxBytes)
+      ensureDir()
+      const workBytes = withRollbackJournalHeader(bytes)
+      const candidate = path.join(dir, `${deviceId}-candidate.${process.pid}.${Date.now()}.sqlite`)
       try {
         writeFileAtomic(candidate, workBytes)
         const info = inspectDatabase(candidate)
 
-        writeFileAtomic(rawFile, bytes)
-        deactivate()
-        removeQuietly(workFile)
-        fs.renameSync(candidate, workFile)
-        activate(workFile)
+        writeFileAtomic(rawFile(deviceId), bytes)
+        closeCached(deviceId)
+        removeQuietly(workFile(deviceId))
+        fs.renameSync(candidate, workFile(deviceId))
+        openWork(deviceId, workFile(deviceId))
         return info
       } finally {
         removeQuietly(candidate)
       }
     },
 
+    /** Deletes a device's snapshot files (removed devices). */
+    remove(deviceId: string) {
+      closeCached(deviceId)
+      removeQuietly(rawFile(deviceId))
+      removeQuietly(workFile(deviceId))
+    },
+
+    /**
+     * Single-device layout → per device: moves `DATA_DIR/snapshot.sqlite` to
+     * `snapshots/<deviceId>.sqlite` (rename, byte-identical) and drops the old
+     * working copy. Idempotent; never overwrites an existing per-device image.
+     */
+    migrateLegacy(deviceId: string | null): 'moved' | 'kept' | 'none' {
+      const legacyRaw = path.join(dataDir, 'snapshot.sqlite')
+      const legacyWork = path.join(dataDir, 'snapshot-work.sqlite')
+      if (!fs.existsSync(legacyRaw)) {
+        removeQuietly(legacyWork)
+        return 'none'
+      }
+      if (!deviceId) return 'kept'
+      ensureDir()
+      const target = rawFile(deviceId)
+      if (fs.existsSync(target)) return 'kept'
+      fs.renameSync(legacyRaw, target)
+      removeQuietly(legacyWork)
+      return 'moved'
+    },
+
     close() {
-      deactivate()
+      for (const deviceId of [...cache.keys()]) closeCached(deviceId)
+      setActiveDatabase(null)
+      resetBootstrapFlag()
     },
   }
 }

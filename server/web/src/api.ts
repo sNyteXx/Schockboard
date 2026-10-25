@@ -74,6 +74,7 @@ export type CommandStatus = 'pending' | 'applied' | 'rejected' | 'cancelled'
 
 export type StoredCommand = {
   id: string
+  deviceId: string
   type: CommandType
   payload: Record<string, unknown>
   createdAt: string
@@ -86,12 +87,36 @@ export type StoredCommand = {
   cancelledAt: string | null
 }
 
+export type DeviceSummary = {
+  id: string
+  /** Editable display name. */
+  label: string
+  /** Name the app reported when it enrolled. */
+  deviceName: string
+  pairedBy: string
+  pairedAt: string
+  lastSeenAt: string | null
+  revokedAt: string | null
+  status: 'active' | 'blocked'
+  lastSnapshotAt: string | null
+  pendingCommands: number
+}
+
+export type DeviceCashbox = {
+  deviceId: string
+  label: string
+  cashbox: { totalPaymentsCents: number; totalOutstandingCents: number } | null
+  cashboxLabel: string | null
+}
+
+/** Status of the selected device plus all devices. */
 export type ServerStatus = {
   paired: boolean
-  pairedAt: string | null
+  deviceId: string | null
+  label: string | null
   deviceLabel: string | null
-  /** ISO time, 'first-device' while nothing was ever enrolled, or null. */
-  enrollmentOpenUntil: string | null
+  deviceName: string | null
+  pairedAt: string | null
   snapshotFromPreviousDevice?: boolean
   lastSeenAt: string | null
   lastSnapshotAt: string | null
@@ -100,6 +125,22 @@ export type ServerStatus = {
   snapshotSizeBytes: number | null
   pendingCommands: number
   publicOrigin: string
+  maxDevices: number
+  activeDevices: number
+  devices: DeviceSummary[]
+}
+
+// ---- selected device -------------------------------------------------------
+
+/** Every admin request carries the selected device; the server defaults to the first active one. */
+let selectedDevice: string | null = null
+
+export function setApiDevice(deviceId: string | null) {
+  selectedDevice = deviceId
+}
+
+export function getApiDevice() {
+  return selectedDevice
 }
 
 export class ApiError extends Error {
@@ -114,6 +155,7 @@ export class ApiError extends Error {
 
 const FALLBACK_MESSAGES: Record<string, string> = {
   no_snapshot: 'Noch kein Datenstand vom Gerät empfangen.',
+  device_not_found: 'Gerät unbekannt oder gesperrt – bitte ein anderes Gerät wählen.',
   unauthorized: 'Anmeldung abgelaufen – bitte Seite neu laden.',
   forbidden: 'Dieses Konto ist nicht freigeschaltet.',
   internal_error: 'Serverfehler – bitte später erneut versuchen.',
@@ -123,7 +165,12 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api/admin${path}`, {
     credentials: 'same-origin',
     ...init,
-    headers: { Accept: 'application/json', ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
+    headers: {
+      Accept: 'application/json',
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(selectedDevice ? { 'X-Schockboard-Device': selectedDevice } : {}),
+      ...init.headers,
+    },
   })
   const text = await response.text()
   let body: unknown = null

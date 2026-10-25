@@ -94,17 +94,18 @@ describe.skipIf(!existsSync(serverEntry))('app ↔ admin server sync', () => {
     expect(await SyncEngine.syncNow()).toMatchObject({ status: 'ok', applied: 0, uploaded: false })
   })
 
-  it('forgets a revoked token and re-enrolls only inside the admin window', async () => {
-    await admin('/device/revoke', { method: 'POST' })
+  it('forgets a revoked token and re-enrolls automatically as a new device', async () => {
+    const { body: before } = await admin('/devices')
+    const firstId = (before.devices ?? before)[0].id
+    await admin(`/devices/${firstId}/revoke`, { method: 'POST' })
     expect(await SyncEngine.syncNow()).toMatchObject({ status: 'error' })
     expect(await RemoteConfigStore.get()).toBeNull()
 
-    // enrollment closed → stays local-only, no error
-    await RemoteConfigStore.setLastEnrollAttempt(0)
-    expect(await SyncEngine.syncNow()).toMatchObject({ status: 'not-paired' })
-
-    await admin('/device/enrollment', { method: 'POST' })
     await RemoteConfigStore.setLastEnrollAttempt(0)
     expect(await SyncEngine.syncNow()).toMatchObject({ status: 'ok', uploaded: true })
+    const { body: after } = await admin('/devices')
+    const active = (after.devices ?? after).filter((device: { status: string }) => device.status === 'active')
+    expect(active).toHaveLength(1)
+    expect(active[0].id).not.toBe(firstId)
   })
 })

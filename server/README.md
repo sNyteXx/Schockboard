@@ -1,8 +1,8 @@
 # Schockboard Web-Verwaltung (Server)
 
-Admin-Server und Web-Oberfläche unter **https://sh0ckb04rd.snytex.de**. Das Gerät (Handy/Tablet) bleibt die einzige
-Datenquelle: der Server zeigt nur den zuletzt hochgeladenen Stand an und sammelt Aufträge, die das Gerät später im
-Hintergrund selbst ausführt. Der Server ändert nie Spieldaten.
+Admin-Server und Web-Oberfläche unter **https://sh0ckb04rd.snytex.de**. Jedes Gerät (Handy/Tablet) bleibt die einzige
+Datenquelle für seine eigene Kasse: der Server zeigt je Gerät nur den zuletzt hochgeladenen Stand an und sammelt je Gerät
+Aufträge, die es später im Hintergrund selbst ausführt. Der Server ändert nie Spieldaten und führt Geräte nie zusammen.
 
 Alle Aufträge aus dem Web sind **still**: das Gerät übernimmt sie beim nächsten Hintergrund-Sync (meist innerhalb von
 1–15 Minuten) ohne Eintrag im Protokoll der App und ohne Beleg. Dazu gehört die „Übermacht“: Buchungen bearbeiten oder
@@ -14,10 +14,11 @@ letzten Stand des Geräts.
 ## Architektur
 
 ```
-App (SQLite, Wahrheit) ──PUT /api/device/snapshot──▶ snapshot.sqlite ─▶ snapshot-work.sqlite ─▶ App-Queries (../src/db/queries)
-        ▲                                                                                        │
-        └──GET /api/device/commands ◀── Auftragswarteschlange (server.db) ◀── Web-UI /api/admin/* ◀┘
+App A (SQLite, Wahrheit) ──PUT /api/device/snapshot──▶ snapshots/<A>.sqlite ─▶ <A>-work.sqlite ─▶ App-Queries (../src/db/queries)
+        ▲                                                                                          │  ?device=<A>
+        └──GET /api/device/commands ◀── Warteschlange von A (server.db) ◀── Web-UI /api/admin/* ◀──┘
            POST /api/device/commands/results
+App B … genauso, mit eigenem Snapshot und eigener Warteschlange
 ```
 
 - **Hono** auf Node 24, Speicherung mit `node:sqlite` (keine nativen Abhängigkeiten).
@@ -25,7 +26,10 @@ App (SQLite, Wahrheit) ──PUT /api/device/snapshot──▶ snapshot.sqlite �
 - Lese-Ansichten nutzen **die echten Queries der App** (`@` → `../src`, `@/db/client` → `src/snapshot-client.ts`),
   damit alle Beträge exakt wie in der App gerechnet werden. Jeder Upload wird geprüft (Header, Größe ≤ 50 MB,
   `quick_check`, Pflichttabellen), atomar abgelegt und als Arbeitskopie (WAL-Header → Rollback) geöffnet.
-- `DATA_DIR`: `server.db` (Gerät mit SHA-256-Token-Hash, Aufträge, Snapshot-Metadaten), `snapshot.sqlite`, `snapshot-work.sqlite`.
+- `DATA_DIR`: `server.db` (Geräte mit SHA-256-Token-Hash und Namen, Aufträge mit `device_id`, Snapshot-Metadaten je Gerät),
+  `snapshots/<deviceId>.sqlite` (Rohbild) und `snapshots/<deviceId>-work.sqlite` (Arbeitskopie, beim ersten Zugriff neu erzeugt).
+- Je Gerät bleibt eine geöffnete Arbeitskopie im Cache (nach Upload neu). Lese-Handler sind synchron; `snapshots.withDevice(id, fn)`
+  wählt die Datenbank für `getSqlite()` genau für die Dauer von `fn` und stellt danach die vorige Auswahl wieder her.
 - Web-UI: React 19 + Vite in `web/`, gebaut nach `dist/public`, ausgeliefert vom selben Server.
 
 ## Authentifizierung
@@ -39,16 +43,33 @@ App (SQLite, Wahrheit) ──PUT /api/device/snapshot──▶ snapshot.sqlite �
 
 | Rolle | Wer | Darf |
 | --- | --- | --- |
-| **Administrator** | `ADMIN_EMAILS` | alles, inkl. Geräteverwaltung (Neues Gerät zulassen, Gerät trennen) |
-| **Verwalter** | `MANAGER_EMAILS` | alles sehen, alle Daten-, Übermacht- und Protokoll-Aufträge anlegen und stornieren, Auftragsverlauf leeren – aber keine Geräteverwaltung (`/api/admin/device/*` → 403) |
+| **Administrator** | `ADMIN_EMAILS` | alles, inkl. Geräteverwaltung (umbenennen, sperren, ersetzen, entfernen) |
+| **Verwalter** | `MANAGER_EMAILS` | alles sehen (alle Geräte), alle Daten-, Übermacht- und Protokoll-Aufträge anlegen und stornieren, Auftragsverlauf leeren – aber keine Geräteverwaltung (`/api/admin/device/*` und schreibende `/api/admin/devices/*` → 403) |
 
 Steht eine Adresse in beiden Listen, gilt Administrator. `GET /api/admin/me` liefert `{ email, role }`; die Web-UI blendet
 Admin-Aktionen für Verwalter aus und zeigt die Rolle in der Seitenleiste. Beide Rollen müssen zusätzlich in der
 Cloudflare-Access-Policy freigegeben sein.
 
+## Gerät wählen
+
+Alle Lese-, Diagramm- und Auftrags-Endpunkte unter `/api/admin` beziehen sich auf **ein** Gerät: `?device=<id>` oder Header
+`X-Schockboard-Device: <id>`; ohne Angabe das erste aktive Gerät. Unbekannte oder gesperrte Geräte → 404 `device_not_found`.
+Die Web-UI merkt sich die Auswahl in `localStorage` und in der URL (`?device=`).
+
+| Endpunkt | Zweck |
+| --- | --- |
+| `GET /api/admin/devices` | alle Geräte: `id, label, deviceName, pairedAt, lastSeenAt, lastSnapshotAt, pendingCommands, status (active/blocked)` |
+| `GET /api/admin/devices/cashbox` | Kasse/offen je aktivem Gerät (Übersichtsleiste) |
+| `PATCH /api/admin/devices/:id` `{label}` | umbenennen (nur Web-Name) |
+| `POST /api/admin/devices/:id/revoke` `{replacedBy?}` | sperren: Token ungültig, ausstehende Aufträge storniert; mit `replacedBy` übernimmt dieses Gerät den Namen („Gerät ersetzen“) |
+| `DELETE /api/admin/devices/:id` | gesperrtes Gerät samt Snapshot und Auftragsverlauf entfernen |
+| `GET /api/admin/status` | Stand des gewählten Geräts + `devices` (alle), `activeDevices`, `maxDevices` |
+
 ## Auftragsverlauf
 
-- `DELETE /api/admin/commands` löscht alle abgeschlossenen Aufträge (übernommen, abgelehnt, storniert); ausstehende bleiben.
+- Aufträge gehören immer genau einem Gerät (`device_id`); nur dieses Gerät bekommt sie und darf Ergebnisse dazu melden.
+- `DELETE /api/admin/commands` löscht die abgeschlossenen Aufträge (übernommen, abgelehnt, storniert) des gewählten Geräts,
+  `?device=all` die aller Geräte; ausstehende bleiben.
   Danach ist im Web nicht mehr nachvollziehbar, was beauftragt wurde.
 - Automatisch: abgeschlossene Aufträge älter als `COMMAND_RETENTION_DAYS` werden beim Start und einmal täglich gelöscht.
 - Auftragsinhalte und E-Mail-Adressen werden nie auf stdout geloggt.
@@ -78,6 +99,8 @@ Roh-Notiz `note` für die Übermacht-Aufträge.
 | `CF_ACCESS_AUD` | – | Audience-Tag der Access-App; wird nur geprüft, wenn gesetzt (empfohlen) |
 | `DEV_NO_AUTH` | – | `1` schaltet die Admin-Anmeldung ab – **nur lokal!** |
 | `DEVICE_RATE_LIMIT_PER_MINUTE` | `120` | Anfragen pro IP und Minute an `/api/device` |
+| `MAX_DEVICES` | `10` | Höchstzahl aktiver Geräte; weitere Anmeldungen → 403 `device_limit` |
+| `ENROLL_RATE_LIMIT_PER_MINUTE` / `ENROLL_RATE_LIMIT_PER_DAY` | `5` / `20` | Selbst-Anmeldungen pro Client-IP (`CF-Connecting-IP`) |
 | `PUBLIC_DIR` | `dist/public` | Ort der gebauten Web-UI |
 
 ## Entwicklung
@@ -104,12 +127,29 @@ docker build -f server/Dockerfile -t schockboard-server:latest .
 Host-Port, Volume `/mnt/user/appdata/schockboard/data:/data`. DockFlare-Labels: die ganze Domain hinter Access
 (`authenticated-default`), nur `/api/device` mit `public-default-bypass`.
 
-## Gerät verbinden
+## Geräte verbinden
 
 Keine Kopplung nötig: Die App kennt `https://sh0ckb04rd.snytex.de` fest und meldet sich beim ersten Start
-selbst über `POST /api/device/enroll` an.
+selbst über `POST /api/device/enroll {deviceName}` an.
 
-- Das **allererste** Gerät wird automatisch angenommen, danach ist die Anmeldung geschlossen.
-- Gerätewechsel/Neuinstallation: Web-UI → **Gerät** → „Neues Gerät zulassen (10 Min.)“, dann die App öffnen.
-  Das neue Gerät ersetzt das bisherige.
-- „Gerät trennen“ widerruft den Token sofort, öffnet die Anmeldung aber nicht.
+- **Jede** Anmeldung legt ein neues, eigenständiges Gerät an (Name = Gerätename der App, im Web änderbar), solange weniger als
+  `MAX_DEVICES` aktive Geräte existieren. Streng begrenzt: 5 pro Minute und 20 pro Tag je Client-IP.
+- Jedes Gerät ist eine eigene Kasse mit eigenem Datenstand und eigener Auftragswarteschlange. Neue Geräte tragen im Web 24 Stunden
+  lang das Kennzeichen „Neu“ – ein unbekanntes Gerät sofort sperren.
+- **Sperren** (Web → Geräte) macht den Token sofort ungültig und storniert die ausstehenden Aufträge dieses Geräts. Die App vergisst
+  den Token und meldet sich beim nächsten Start ggf. als *neues* Gerät an.
+- Neuinstallation/Gerätewechsel: Die App erscheint als neues Gerät. „Gerät ersetzen“ sperrt das alte und gibt dessen Namen an das
+  neue weiter; die Daten werden nicht zusammengeführt.
+
+## Umstellung von einem Gerät auf mehrere (einmalig beim Start)
+
+Ein `DATA_DIR` im alten Format (`server.db` ohne `devices.label`/`commands.device_id`, `snapshot.sqlite`) wird beim ersten Start
+automatisch umgestellt:
+
+1. `server.db.pre-multidevice.bak` – Kopie der alten `server.db` (`VACUUM INTO`, nur wenn noch nicht vorhanden).
+2. In **einer** Transaktion: `devices` bekommt `label` und `device_name` (aus `paired_by` ohne `app: `, z. B. „SM-X910“);
+   `commands` wird mit `device_id NOT NULL` neu angelegt, alle Aufträge (auch ausstehende) gehören dem aktiven Gerät;
+   `snapshot_meta` wird je Gerät geführt, der bisherige Eintrag gehört dem aktiven Gerät. `PRAGMA user_version = 2`.
+3. `snapshot.sqlite` wird nach `snapshots/<aktives Gerät>.sqlite` **umbenannt** (bytegleich), `snapshot-work.sqlite` gelöscht.
+
+Das Gerät behält seinen Token und synchronisiert ohne Änderung weiter. Ein erneuter Start ändert nichts mehr (idempotent).

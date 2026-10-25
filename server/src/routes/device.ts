@@ -7,7 +7,7 @@ import { createDeviceAuth, type AppEnv } from '../auth'
 import type { ServerConfig } from '../config'
 import { rateLimit } from '../rate-limit'
 import { SnapshotValidationError, type SnapshotManager } from '../snapshot'
-import type { Store } from '../store'
+import { DeviceLimitError, type Store } from '../store'
 
 const SNAPSHOT_CONTENT_TYPES = new Set(['application/vnd.sqlite3', 'application/x-sqlite3', 'application/octet-stream'])
 
@@ -21,18 +21,26 @@ export function deviceRoutes(deps: { config: ServerConfig; store: Store; snapsho
 
   app.use('*', rateLimit({ limit: config.deviceRateLimitPerMinute, windowMs: 60_000 }))
 
-  // Unauthenticated by design: the app enrolls itself on first start. The
-  // store only accepts it while enrollment is open (see Store.enrollDevice).
+  // Unauthenticated by design: every app enrolls itself on first start and
+  // becomes a new, independent device (its own ledger), up to MAX_DEVICES
+  // active devices. Strictly rate-limited per client IP (CF-Connecting-IP).
   app.post(
     '/enroll',
-    rateLimit({ limit: 5, windowMs: 60_000 }),
+    rateLimit({ limit: config.enrollLimitPerMinute, windowMs: 60_000 }),
+    rateLimit({ limit: config.enrollLimitPerDay, windowMs: 86_400_000 }),
     bodyLimit({ maxSize: 4 * 1024, onError: tooLarge('Anfrage zu groß.') }),
     async (c) => {
       const parsed = enrollRequestSchema.safeParse(await c.req.json().catch(() => null))
       if (!parsed.success) return c.json({ error: 'invalid_request' }, 400)
-      const device = store.enrollDevice(parsed.data.deviceName)
-      if (!device) return c.json({ error: 'enrollment_closed' }, 403)
-      return c.json({ token: device.token, deviceId: device.id })
+      try {
+        const device = store.enrollDevice(parsed.data.deviceName, config.maxDevices)
+        return c.json({ token: device.token, deviceId: device.id })
+      } catch (error) {
+        if (error instanceof DeviceLimitError) {
+          return c.json({ error: 'device_limit', message: `Höchstens ${error.max} aktive Geräte.` }, 403)
+        }
+        throw error
+      }
     }
   )
 
@@ -43,7 +51,7 @@ export function deviceRoutes(deps: { config: ServerConfig; store: Store; snapsho
   app.get('/commands', (c) => {
     const body = deviceCommandsResponseSchema.parse({
       protocolVersion: PROTOCOL_VERSION,
-      commands: store.fetchPendingForDevice(100),
+      commands: store.fetchPendingForDevice(c.get('device').id, 100),
     })
     c.header('Cache-Control', 'no-store')
     return c.json(body)
@@ -63,7 +71,7 @@ export function deviceRoutes(deps: { config: ServerConfig; store: Store; snapsho
       if (!parsed.success) {
         return c.json({ error: 'invalid_request', issues: parsed.error.issues.slice(0, 10) }, 400)
       }
-      const { accepted, ignored } = store.applyResults(parsed.data.results)
+      const { accepted, ignored } = store.applyResults(c.get('device').id, parsed.data.results)
       return c.json({ ok: true as const, accepted, ignored })
     }
   )
@@ -87,12 +95,12 @@ export function deviceRoutes(deps: { config: ServerConfig; store: Store; snapsho
 
       const bytes = new Uint8Array(await c.req.arrayBuffer())
       try {
-        const info = snapshots.install(bytes, config.maxSnapshotBytes)
-        const receivedAt = store.recordSnapshot({
+        const deviceId = c.get('device').id
+        const info = snapshots.install(deviceId, bytes, config.maxSnapshotBytes)
+        const receivedAt = store.recordSnapshot(deviceId, {
           createdAt,
           schemaVersion: schemaVersion ?? info.schemaVersion,
           sizeBytes: bytes.length,
-          deviceId: c.get('device').id,
         })
         return c.json({ ok: true as const, receivedAt, sizeBytes: bytes.length, schemaVersion: schemaVersion ?? info.schemaVersion })
       } catch (error) {
