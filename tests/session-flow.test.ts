@@ -207,3 +207,21 @@ describe('deleting players', () => {
     expect(() => deletePlayer({ actor, playerId: present[0] })).toThrow(/Buchungen/)
   })
 })
+
+describe('closing preview explains the absence rule', () => {
+  it('matches the booked charge and ignores archived players', async () => {
+    const { buildEveningSummary, summaryInputFromDetail } = await import('@/domain/evening-summary')
+    const { sessionId, present, absent } = setUpEvening('full_average')
+    for (const playerId of [present[0], present[0], present[1], present[1], present[2]]) addLossEntry({ actor, sessionId, playerId, note: null })
+    // simulate an archived player still listed in the evening (pre-2.0 data)
+    memory.current.runSync('UPDATE players SET is_archived = 1 WHERE id = $id', { $id: absent[1] })
+
+    const preview = buildEveningSummary(summaryInputFromDetail(getSessionDetail(sessionId)!, 'full_average'))
+    expect(preview.absenceMath).toEqual({ baseCents: 500, presentCoreCount: 3, averageCents: 167, absentCoreCount: 1 })
+    expect(preview.absentCore.map((player) => player.playerId)).toEqual([absent[0]])
+
+    closeSession({ actor, sessionId })
+    const booked = memory.current.getAllSync<{ player_id: string; amount_cents: number }>('SELECT player_id, amount_cents FROM absence_charges')
+    expect(booked).toEqual([{ player_id: absent[0], amount_cents: preview.absenceChargeCents }])
+  })
+})

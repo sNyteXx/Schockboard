@@ -175,3 +175,16 @@ describe('chart labels', () => {
     expect(disambiguateLabels(['15.03.', '15.03.', '15.03.', '22.03.'])).toEqual(['15.03.', '15.03. #2', '15.03. #3', '22.03.'])
   })
 })
+
+describe('open debt per player', () => {
+  it('does not let one player\'s credit hide another player\'s debt', () => {
+    const timeline = buildBalanceTimeline(
+      [
+        { at: '2026-01-01T20:00:00Z', kind: 'charge', amountCents: 200, playerId: 'andre' },
+        { at: '2026-01-01T20:00:00Z', kind: 'payment', amountCents: 400, playerId: 'marvin' },
+      ],
+      ['2026-01-02T00:00:00Z']
+    )
+    expect(timeline[0]).toMatchObject({ paidCents: 400, openCents: 200 })
+  })
+})

@@ -147,7 +147,7 @@ export default function SessionDetailScreen() {
       normalLossCount: normalLosses.length,
       totalTodayCents: currentDetail.losses.reduce((total, loss) => total + loss.amountCents, 0),
       presentCount: currentDetail.attendance.filter((row) => row.present).length,
-      absentCoreCount: currentDetail.attendance.filter((row) => !row.present && row.isCore).length,
+      absentCoreCount: currentDetail.attendance.filter((row) => !row.present && row.isCore && !row.isArchived).length,
       players,
       // Storno receipts (0 €) are bookkeeping noise in the live feed.
       timeline: currentDetail.timeline.filter(
@@ -913,6 +913,16 @@ function SummaryBody({ summary, wide }: { summary: EveningSummary; wide: boolean
     <View style={{ gap: spacing.sm }}>
       <Text style={styles.overline}>{summary.isFinal ? 'Abwesend – gebucht' : 'Abwesend – wird beim Abschluss gebucht'}</Text>
       <BarChart data={absences} highlightFirst={false} barHeight={6} />
+      {summary.absenceMath ? (
+        // Spell the rule out with tonight's numbers so nobody has to trust a black box.
+        <Text style={styles.hint}>
+          {`So wird gerechnet: Verluste der ${summary.absenceMath.presentCoreCount} anwesenden Stammspieler ${formatCurrency(summary.absenceMath.baseCents)} ÷ ${summary.absenceMath.presentCoreCount} = ${formatCurrency(summary.absenceMath.averageCents)} Durchschnitt. `}
+          {summary.absenceMath.absentCoreCount > 1 && summary.absenceChargeCents !== summary.absenceMath.averageCents
+            ? `Geteilt durch ${summary.absenceMath.absentCoreCount} Abwesende = ${formatCurrency(summary.absenceChargeCents)} pro Person.`
+            : `Jeder Abwesende zahlt den vollen Durchschnitt: ${formatCurrency(summary.absenceChargeCents)}.`}
+          {' Bierrunden und Gäste zählen nicht mit.'}
+        </Text>
+      ) : null}
       {skip ? <Text style={styles.hint}>{skip}</Text> : null}
     </View>
   ) : null

@@ -89,7 +89,7 @@ export default function CashboxScreen() {
       avatar: { id: row.playerId, name: row.playerName },
     }));
     const paid = data.data.cashbox.totalPaymentsCents;
-    const outstanding = Math.max(0, data.data.cashbox.totalOutstandingCents);
+    const outstanding = data.data.cashbox.totalOutstandingCents;
     const donut = [
       { key: "paid", label: "Eingezahlt", value: paid, color: colors.accent, display: formatCurrency(paid) },
       { key: "open", label: "Noch offen", value: outstanding, color: colors.danger, display: formatCurrency(outstanding) },

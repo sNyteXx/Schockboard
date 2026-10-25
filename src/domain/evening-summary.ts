@@ -1,5 +1,5 @@
 import { formatCurrency } from '@/domain/format'
-import { calculateAbsenceChargeCents } from '@/domain/ledger'
+import { calculateAbsenceAverageCents, calculateAbsenceChargeCents } from '@/domain/ledger'
 import type { AbsencePenaltyMode, SessionDetail } from '@/domain/types'
 
 /**
@@ -79,6 +79,8 @@ export type EveningSummary = {
   totalCents: number
   /** Charge per absent regular for open evenings (0 when skipped). */
   absenceChargeCents: number
+  /** How the charge comes about (open evenings): base ÷ present regulars = average. */
+  absenceMath: { baseCents: number; presentCoreCount: number; averageCents: number; absentCoreCount: number } | null
   absenceSkipReason: AbsenceSkipReason
   pechvogel: { playerIds: string[]; names: string[]; lossCount: number; lossCents: number } | null
 }
@@ -146,6 +148,7 @@ export function buildEveningSummary(input: EveningSummaryInput): EveningSummary 
   const absentCoreRows = input.attendance.filter((row) => !row.present && row.isCore)
   let absenceChargeCents = 0
   let absenceSkipReason: AbsenceSkipReason = null
+  let absenceMath: EveningSummary['absenceMath'] = null
 
   if (isFinal) {
     for (const absence of input.absences) {
@@ -175,6 +178,12 @@ export function buildEveningSummary(input: EveningSummaryInput): EveningSummary 
       })
       for (const row of absentCoreRows) {
         byId.get(row.playerId)!.absenceCents = absenceChargeCents
+      }
+      absenceMath = {
+        baseCents: totalPresentCoreLossCents,
+        presentCoreCount: presentCore.length,
+        averageCents: calculateAbsenceAverageCents(totalPresentCoreLossCents, presentCore.length),
+        absentCoreCount: absentCoreRows.length,
       }
     }
   }
@@ -208,6 +217,7 @@ export function buildEveningSummary(input: EveningSummaryInput): EveningSummary 
     absenceCents,
     totalCents: lossCents + beerRoundCents + absenceCents,
     absenceChargeCents,
+    absenceMath,
     absenceSkipReason,
     pechvogel: findPechvogel(all),
   }
@@ -217,7 +227,10 @@ export function buildEveningSummary(input: EveningSummaryInput): EveningSummary 
 export function summaryInputFromDetail(detail: SessionDetail, absencePenaltyMode: AbsencePenaltyMode): EveningSummaryInput {
   return {
     status: detail.session.status,
-    attendance: detail.attendance.map((row) => ({ playerId: row.playerId, playerName: row.playerName, isCore: row.isCore, present: row.present })),
+    // Archived players never take part (same rule as closeSession).
+    attendance: detail.attendance
+      .filter((row) => !row.isArchived)
+      .map((row) => ({ playerId: row.playerId, playerName: row.playerName, isCore: row.isCore, present: row.present })),
     losses: detail.losses.map((loss) => ({ playerId: loss.playerId, playerName: loss.playerName, amountCents: loss.amountCents, isBeerRound: loss.isBeerRound })),
     absences: detail.absences.map((row) => ({ playerId: row.playerId, playerName: row.playerName, amountCents: row.amountCents })),
     absencePenaltyMode,

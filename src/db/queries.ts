@@ -589,14 +589,15 @@ export function getCashboxSummary(): CashboxSummary {
   const row = sqliteGet<{ total_payments_cents: number }>(
     'SELECT COALESCE(SUM(amount_cents), 0) AS total_payments_cents FROM payments'
   )
-  const totalOutstandingCents = getDebtSummaries().reduce(
-    (sum, debtor) => sum + debtor.openDebtCents,
-    0
-  )
+  // Per player: one person's credit must not hide another person's debt.
+  const balances = getDebtSummaries().map((debtor) => debtor.openDebtCents)
+  const totalOutstandingCents = balances.filter((cents) => cents > 0).reduce((sum, cents) => sum + cents, 0)
+  const totalCreditCents = balances.filter((cents) => cents < 0).reduce((sum, cents) => sum - cents, 0)
 
   return {
     totalPaymentsCents: row?.total_payments_cents ?? 0,
     totalOutstandingCents,
+    totalCreditCents,
   }
 }
 

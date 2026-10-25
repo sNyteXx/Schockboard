@@ -118,7 +118,10 @@ export type PlayerDebtSummary = {
 
 export type CashboxSummary = {
   totalPaymentsCents: number
+  /** Sum of positive balances (what players still owe). */
   totalOutstandingCents: number
+  /** Sum of credits (players who paid more than they owe). */
+  totalCreditCents: number
 }
 
 export type SessionOverview = {

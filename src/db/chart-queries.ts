@@ -32,6 +32,8 @@ export type MoneyEvent = {
   /** Charges (losses, beer rounds, absences, corrections) add debt, payments reduce it. */
   kind: 'charge' | 'payment'
   amountCents: number
+  /** When set, open debt is summed per player (credits don't offset others' debt). */
+  playerId?: string
 }
 
 export type SeasonLossRow = {
@@ -111,16 +113,16 @@ export function getSessionPlayerTotals(): SessionPlayerTotal[] {
 
 /** All money movements, oldest first. */
 export function getMoneyEvents(): MoneyEvent[] {
-  const rows = sqliteAll<{ at: string; kind: 'charge' | 'payment'; amount_cents: number }>(
+  const rows = sqliteAll<{ at: string; kind: 'charge' | 'payment'; amount_cents: number; player_id: string }>(
     `
-      SELECT created_at AS at, 'charge' AS kind, amount_cents FROM loss_entries
-      UNION ALL SELECT created_at, 'charge', amount_cents FROM absence_charges
-      UNION ALL SELECT created_at, 'charge', amount_cents FROM corrections
-      UNION ALL SELECT created_at, 'payment', amount_cents FROM payments
+      SELECT created_at AS at, 'charge' AS kind, amount_cents, player_id FROM loss_entries
+      UNION ALL SELECT created_at, 'charge', amount_cents, player_id FROM absence_charges
+      UNION ALL SELECT created_at, 'charge', amount_cents, player_id FROM corrections
+      UNION ALL SELECT created_at, 'payment', amount_cents, player_id FROM payments
       ORDER BY at ASC
     `
   )
-  return rows.map((row) => ({ at: row.at, kind: row.kind, amountCents: Number(row.amount_cents) || 0 }))
+  return rows.map((row) => ({ at: row.at, kind: row.kind, amountCents: Number(row.amount_cents) || 0, playerId: row.player_id }))
 }
 
 /** Normal losses per closed evening and player (season line chart). */
@@ -156,16 +158,20 @@ export function buildBalanceTimeline(events: MoneyEvent[], checkpoints: string[]
   const sorted = [...events].sort((left, right) => left.at.localeCompare(right.at))
   const points: BalancePoint[] = []
   let index = 0
-  let charged = 0
   let paid = 0
+  const balances = new Map<string, number>()
   for (const checkpoint of [...checkpoints].sort()) {
     while (index < sorted.length && sorted[index].at <= checkpoint) {
       const event = sorted[index]
+      const key = event.playerId ?? '*'
+      const delta = event.kind === 'payment' ? -event.amountCents : event.amountCents
       if (event.kind === 'payment') paid += event.amountCents
-      else charged += event.amountCents
+      balances.set(key, (balances.get(key) ?? 0) + delta)
       index++
     }
-    points.push({ at: checkpoint, paidCents: paid, openCents: charged - paid })
+    let open = 0
+    for (const balance of balances.values()) if (balance > 0) open += balance
+    points.push({ at: checkpoint, paidCents: paid, openCents: open })
   }
   return points
 }
