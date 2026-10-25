@@ -1,11 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useRouter } from "expo-router";
+import { useIsFocused, useRouter } from "expo-router";
 import { useMemo } from "react";
 import { View } from "react-native";
 
 import { PlayerAvatar } from "@/components/avatar";
 import { BrandEmblem } from "@/components/brand";
 import { BarChart, Donut, LineChart } from "@/components/charts";
+import { TourTarget, TOUR_TARGETS, useTourScreen } from "@/components/tour";
 import {
   AppText,
   Badge,
@@ -15,9 +16,11 @@ import {
   Divider,
   EmptyState,
   Grid,
+  InnerScroll,
   KpiTile,
   ListRow,
   LoadError,
+  MeasuredFill,
   Notice,
   Row,
   Screen,
@@ -52,7 +55,7 @@ export default function DashboardScreen() {
   const resource = useAsyncResource(() => {
     const snapshot = SessionService.getDashboardSnapshot();
     const charts = getDashboardCharts(
-      { paidCents: snapshot.cashbox.totalPaymentsCents, openCents: snapshot.cashbox.totalOutstandingCents },
+      { paidCents: snapshot.cashbox.cashOnHandCents, openCents: snapshot.cashbox.totalOutstandingCents },
       shortDate,
     );
     return { snapshot, charts };
@@ -60,6 +63,8 @@ export default function DashboardScreen() {
 
   const isAdvanced = runtime.viewMode === "advanced";
   const data = resource.data;
+  const focused = useIsFocused();
+  useTourScreen("dashboard", focused && !!data);
 
   const trendSeries = useMemo(() => {
     if (!data) return [];
@@ -103,8 +108,110 @@ export default function DashboardScreen() {
   const goToEvening = () => router.push(openSession ? `/session/${openSession.id}` : "/(tabs)/sessions");
   const hasMoney = snapshot.cashbox.totalPaymentsCents > 0 || snapshot.cashbox.totalOutstandingCents > 0;
 
+  const fill = isTablet ? ({ flex: 1, minHeight: 0 } as const) : undefined;
+  const inner = (node: React.ReactNode) => (isTablet ? <InnerScroll contentStyle={{ gap: spacing.md }}>{node}</InnerScroll> : node);
+  const hasTrend = charts.trend.labels.length >= 2;
+  const trendChart = (height: number) => (
+    <LineChart series={trendSeries} labels={charts.trend.labels} height={height} formatY={euroAxis} area legend={trendSeries.length > 1} />
+  );
+
+  const trendCard = (
+    <Card style={fill}>
+      <CardHeader overline="Trend" title="Verluste pro Abend" icon="analytics-outline" aside={charts.trend.labels.length ? <Badge>{charts.trend.labels.length} Abende</Badge> : null} />
+      {hasTrend ? (
+        isTablet ? (
+          <MeasuredFill minHeight={120}>{(height) => trendChart(Math.max(120, height - (trendSeries.length > 1 ? 32 : 0)))}</MeasuredFill>
+        ) : (
+          trendChart(190)
+        )
+      ) : (
+        <EmptyState icon="analytics-outline" title="Noch zu wenig Daten">
+          Nach zwei abgeschlossenen Abenden erscheint hier der Verlauf.
+        </EmptyState>
+      )}
+    </Card>
+  );
+
+  const hiddenDebtors = data.snapshot.debtors.filter((debtor) => debtor.openDebtCents > 0).length - debtorBars.length;
+  const cashCard = (
+    <Card style={fill}>
+      <CardHeader overline="Kasse" title="Eingezahlt vs. offen" icon="pie-chart-outline" />
+      {inner(
+        <>
+          {hasMoney ? (
+            <Donut
+              data={donutData}
+              size={isTablet ? 150 : 128}
+              centerValue={formatCurrency(snapshot.cashbox.cashOnHandCents)}
+              centerLabel="In der Kasse"
+            />
+          ) : (
+            <EmptyState icon="wallet-outline">Noch keine Buchungen in der Kasse.</EmptyState>
+          )}
+          <Divider />
+          <CardHeader overline="Offene Posten" title="Größte Zahler" />
+          {debtorBars.length ? (
+            <BarChart data={debtorBars} onPressItem={() => router.push("/(tabs)/cashbox")} />
+          ) : (
+            <EmptyState icon="checkmark-done-outline">Keine offenen Schulden – alles beglichen.</EmptyState>
+          )}
+          {hiddenDebtors > 0 ? (
+            <Button tone="ghost" size="sm" iconRight="arrow-forward" onPress={() => router.push("/(tabs)/cashbox")}>{`Alle anzeigen (+${hiddenDebtors})`}</Button>
+          ) : null}
+        </>,
+      )}
+    </Card>
+  );
+
+  const timelineCard = isAdvanced ? (
+    <Card style={fill}>
+      <CardHeader overline="Letzte Buchungen" title="Timeline" icon="time-outline" />
+      {snapshot.recentHistory.length ? (
+        inner(
+          <View>
+            {snapshot.recentHistory.map((entry, index) => {
+              const display = describeHistoryEntry(entry);
+              return (
+                <View key={entry.id}>
+                  {index > 0 ? <Divider /> : null}
+                  <ListRow
+                    leading={entry.playerId && entry.playerName ? <PlayerAvatar id={entry.playerId} name={entry.playerName} size={28} /> : <HistoryIcon kind={entry.kind} />}
+                    title={display.title}
+                    detail={[formatDateTime(entry.createdAt), display.detail].filter(Boolean).join(" · ")}
+                    value={entry.amountCents !== null ? formatCurrency(entry.amountCents) : undefined}
+                  />
+                </View>
+              );
+            })}
+          </View>,
+        )
+      ) : (
+        <EmptyState icon="time-outline">Noch keine Buchungen.</EmptyState>
+      )}
+    </Card>
+  ) : null;
+
+  const rulesCard = isAdvanced ? (
+    <Card tone="accent" style={fill}>
+      <CardHeader overline="Hausregeln" title={snapshot.settings.ruleProfile.title} icon="book-outline" aside={<Badge tone="accent">{snapshot.settings.ruleProfile.alias.general}</Badge>} />
+      {inner(
+        <>
+          <AppText tone="muted">{snapshot.settings.ruleProfile.overview}</AppText>
+          <Stack gap={spacing.xs}>
+            {snapshot.settings.ruleProfile.ranking.map((item, index) => (
+              <Row key={item} gap={spacing.xs} align="flex-start">
+                <AppText variant="numericSm" tone="accent" style={{ width: 20 }}>{index + 1}</AppText>
+                <AppText style={{ flex: 1 }}>{item}</AppText>
+              </Row>
+            ))}
+          </Stack>
+        </>,
+      )}
+    </Card>
+  ) : null;
+
   return (
-    <Screen>
+    <Screen fixedOnTablet>
       <ScreenHeader
         leading={<BrandEmblem size={isTablet ? 36 : 32} themeId={runtime.themeId} />}
         title="Schockboard"
@@ -114,7 +221,9 @@ export default function DashboardScreen() {
           isTablet ? (
             <>
               <Button tone="secondary" icon="wallet-outline" onPress={() => router.push("/(tabs)/cashbox")}>Zahlung</Button>
-              <Button icon={openSession ? "play" : "add"} onPress={goToEvening}>{openSession ? "Weiterspielen" : "Abend starten"}</Button>
+              <TourTarget id={TOUR_TARGETS.dashboardStart} onPress={goToEvening}>
+                <Button icon={openSession ? "play" : "add"} onPress={goToEvening}>{openSession ? "Weiterspielen" : "Abend starten"}</Button>
+              </TourTarget>
             </>
           ) : null
         }
@@ -124,9 +233,11 @@ export default function DashboardScreen() {
 
       {!isTablet ? (
         <Row gap={spacing.xs}>
-          <Button icon={openSession ? "play" : "add"} onPress={goToEvening} style={{ flex: 1 }}>
-            {openSession ? "Weiterspielen" : "Abend starten"}
-          </Button>
+          <TourTarget id={TOUR_TARGETS.dashboardStart} onPress={goToEvening} style={{ flex: 1 }}>
+            <Button icon={openSession ? "play" : "add"} onPress={goToEvening}>
+              {openSession ? "Weiterspielen" : "Abend starten"}
+            </Button>
+          </TourTarget>
           <Button tone="secondary" icon="wallet-outline" onPress={() => router.push("/(tabs)/cashbox")}>Zahlung</Button>
         </Row>
       ) : null}
@@ -162,7 +273,7 @@ export default function DashboardScreen() {
           tone="hero"
           icon="wallet"
           label={snapshot.settings.cashboxLabel || "Kasse"}
-          value={snapshot.cashbox.totalPaymentsCents}
+          value={snapshot.cashbox.cashOnHandCents}
           format={formatCurrency}
           sparkline={charts.cashSeries}
           hint="Alle erfassten Zahlungen"
@@ -194,7 +305,7 @@ export default function DashboardScreen() {
           tone="hero"
           icon="wallet"
           label={snapshot.settings.cashboxLabel || "Kasse"}
-          value={snapshot.cashbox.totalPaymentsCents}
+          value={snapshot.cashbox.cashOnHandCents}
           format={formatCurrency}
           sparkline={charts.cashSeries}
           hint="Alle erfassten Zahlungen"
@@ -223,80 +334,32 @@ export default function DashboardScreen() {
         </Stack>
       )}
 
-      <Split weights={[7, 5]}>
-        <Card>
-          <CardHeader overline="Trend" title="Verluste pro Abend" icon="analytics-outline" aside={charts.trend.labels.length ? <Badge>{charts.trend.labels.length} Abende</Badge> : null} />
-          {charts.trend.labels.length >= 2 ? (
-            <LineChart series={trendSeries} labels={charts.trend.labels} height={isTablet ? 240 : 190} formatY={euroAxis} area legend={trendSeries.length > 1} />
-          ) : (
-            <EmptyState icon="analytics-outline" title="Noch zu wenig Daten">
-              Nach zwei abgeschlossenen Abenden erscheint hier der Verlauf.
-            </EmptyState>
-          )}
-        </Card>
-
-        <Card>
-          <CardHeader overline="Kasse" title="Eingezahlt vs. offen" icon="pie-chart-outline" />
-          {hasMoney ? (
-            <Donut
-              data={donutData}
-              size={isTablet ? 150 : 128}
-              centerValue={formatCurrency(snapshot.cashbox.totalPaymentsCents)}
-              centerLabel="In der Kasse"
-            />
-          ) : (
-            <EmptyState icon="wallet-outline">Noch keine Buchungen in der Kasse.</EmptyState>
-          )}
-          <Divider />
-          <CardHeader overline="Offene Posten" title="Größte Zahler" />
-          {debtorBars.length ? (
-            <BarChart data={debtorBars} onPressItem={() => router.push("/(tabs)/cashbox")} />
-          ) : (
-            <EmptyState icon="checkmark-done-outline">Keine offenen Schulden – alles beglichen.</EmptyState>
-          )}
-        </Card>
-      </Split>
-
-      {isAdvanced ? (
-        <Split weights={[7, 5]}>
-          <Card>
-            <CardHeader overline="Letzte Buchungen" title="Timeline" icon="time-outline" />
-            {snapshot.recentHistory.length ? (
-              <View>
-                {snapshot.recentHistory.map((entry, index) => {
-                  const display = describeHistoryEntry(entry);
-                  return (
-                    <View key={entry.id}>
-                      {index > 0 ? <Divider /> : null}
-                      <ListRow
-                        leading={entry.playerId && entry.playerName ? <PlayerAvatar id={entry.playerId} name={entry.playerName} size={28} /> : <HistoryIcon kind={entry.kind} />}
-                        title={display.title}
-                        detail={[formatDateTime(entry.createdAt), display.detail].filter(Boolean).join(" · ")}
-                        value={entry.amountCents !== null ? formatCurrency(entry.amountCents) : undefined}
-                      />
-                    </View>
-                  );
-                })}
-              </View>
-            ) : (
-              <EmptyState icon="time-outline">Noch keine Buchungen.</EmptyState>
-            )}
-          </Card>
-
-          <Card tone="accent">
-            <CardHeader overline="Hausregeln" title={snapshot.settings.ruleProfile.title} icon="book-outline" aside={<Badge tone="accent">{snapshot.settings.ruleProfile.alias.general}</Badge>} />
-            <AppText tone="muted">{snapshot.settings.ruleProfile.overview}</AppText>
-            <Stack gap={spacing.xs}>
-              {snapshot.settings.ruleProfile.ranking.map((item, index) => (
-                <Row key={item} gap={spacing.xs} align="flex-start">
-                  <AppText variant="numericSm" tone="accent" style={{ width: 20 }}>{index + 1}</AppText>
-                  <AppText style={{ flex: 1 }}>{item}</AppText>
-                </Row>
-              ))}
-            </Stack>
-          </Card>
-        </Split>
-      ) : null}
+      {isTablet ? (
+        // Tablets: one screen, no page scroll – the cards share the remaining height.
+        <View style={{ flex: 1, minHeight: 0, flexDirection: "row", alignItems: "stretch", gap: spacing.lg - 4 }}>
+          <View style={{ flex: isAdvanced ? 6 : 7, minWidth: 0, minHeight: 0 }}>{trendCard}</View>
+          <View style={{ flex: isAdvanced ? 4 : 5, minWidth: 0, minHeight: 0 }}>{cashCard}</View>
+          {isAdvanced ? (
+            <View style={{ flex: 4, minWidth: 0, minHeight: 0, gap: spacing.lg - 4 }}>
+              {timelineCard}
+              {rulesCard}
+            </View>
+          ) : null}
+        </View>
+      ) : (
+        <>
+          <Split weights={[7, 5]}>
+            {trendCard}
+            {cashCard}
+          </Split>
+          {isAdvanced ? (
+            <Split weights={[7, 5]}>
+              {timelineCard}
+              {rulesCard}
+            </Split>
+          ) : null}
+        </>
+      )}
     </Screen>
   );
 }

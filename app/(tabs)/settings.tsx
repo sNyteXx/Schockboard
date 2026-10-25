@@ -1,9 +1,13 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { Alert, View } from "react-native";
+import { View } from "react-native";
+
+import { Alert } from "@/components/dialog";
 import { useEffect, useState } from "react";
+import { useRouter } from "expo-router";
 
 import { PlayerAvatar } from "@/components/avatar";
 import { PressableScale } from "@/components/motion";
+import { restartTour } from "@/components/tour";
 import {
   AppText,
   Badge,
@@ -74,6 +78,7 @@ const THEME_ORDER: Array<{ id: ThemeId; hint: string }> = [
 
 export default function SettingsScreen() {
   const runtime = useRuntime();
+  const router = useRouter();
   const data = useAsyncResource(
     () => ({
       settings: SessionService.getSettings(),
@@ -383,6 +388,22 @@ export default function SettingsScreen() {
           </AppText>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader overline="Hilfe" title="Einführung" icon="sparkles-outline" />
+        <AppText tone="muted">Die kurze Tour zeigt dir Schritt für Schritt, wie ein Spielabend läuft – vom Start bis zur Kasse. Es wird dabei nichts gebucht.</AppText>
+        <Button
+          tone="secondary"
+          icon="play-circle-outline"
+          onPress={() => {
+            Feedback.tap();
+            restartTour();
+            router.navigate("/(tabs)");
+          }}
+        >
+          Einführung erneut zeigen
+        </Button>
+      </Card>
 
       <Card>
         <CardHeader overline="Datenhoheit" title="Sicherung und Wiederherstellung" icon="shield-checkmark-outline" />

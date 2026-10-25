@@ -12,6 +12,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { scheduleOnRN } from 'react-native-worklets'
 
 import { CALM_EASING, PressableScale } from '@/components/motion'
+import { TourTarget } from '@/components/tour/tour-target'
+import { TOUR_TARGETS } from '@/components/tour/tour-steps'
 import { useDeviceLayout } from '@/hooks/use-device-layout'
 import { Feedback } from '@/services/haptics'
 import { UNDO_WINDOW_MS, UndoService } from '@/services/undo-service'
@@ -114,6 +116,7 @@ export function UndoToast({
 
   return (
     <Animated.View style={[styles.container, { bottom: Math.max(insets.bottom, 12) + (isTablet ? 12 : 72) + lift, width: toastWidth, left: (windowWidth - toastWidth) / 2 }, containerStyle]}>
+      <TourTarget id={TOUR_TARGETS.undoToast}>
       <View style={styles.row}>
         <View style={styles.icon}>
           <Ionicons name="checkmark" size={16} color={colors.success} />
@@ -127,6 +130,7 @@ export function UndoToast({
       <View style={styles.track}>
         <Animated.View style={[styles.progress, progressStyle]} />
       </View>
+      </TourTarget>
     </Animated.View>
   )
 }

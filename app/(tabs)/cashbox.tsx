@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 
 import { BottomSheet } from "@/components/bottom-sheet";
+import { Alert } from "@/components/dialog";
 import { PlayerAvatar } from "@/components/avatar";
 import { BarChart, Donut, type BarDatum } from "@/components/charts";
 import {
+  AppText,
   Badge,
   Button,
   Card,
@@ -13,6 +15,7 @@ import {
   Divider,
   EmptyState,
   Field,
+  InnerScroll,
   Input,
   KpiTile,
   ListRow,
@@ -37,6 +40,7 @@ import { SessionService } from "@/services/session-service";
 import { colors, spacing } from "@/theme/tokens";
 
 const AMOUNT_PRESETS = [500, 1000, 2000];
+const WITHDRAW_PURPOSES = ["Getränke", "Snacks", "Deckel/Würfel", "Sonstiges"];
 
 function centsToInput(cents: number) {
   return (cents / 100).toFixed(2).replace(".", ",");
@@ -61,6 +65,9 @@ export default function CashboxScreen() {
   const [note, setNote] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [withdrawNote, setWithdrawNote] = useState("");
 
   useEffect(() => {
     if (!data.data) {
@@ -147,6 +154,47 @@ export default function CashboxScreen() {
     }
   }
 
+  function handleRecordWithdrawal() {
+    try {
+      CashboxService.recordWithdrawal({
+        actor: { accountId: runtime.account!.id, username: runtime.account!.username },
+        amountCents: parseEuroToCents(withdrawAmount),
+        note: withdrawNote,
+      });
+      Feedback.success();
+      runtime.bumpDataVersion();
+      runtime.setFlash({ type: "success", message: "Entnahme verbucht." });
+      setWithdrawAmount("");
+      setWithdrawNote("");
+      setWithdrawOpen(false);
+    } catch (caught) {
+      Feedback.error();
+      Alert.alert("Entnahme nicht möglich", caught instanceof Error ? caught.message : "Entnahme konnte nicht verbucht werden.");
+    }
+  }
+
+  const withdrawalForm = (
+    <Stack gap={spacing.md}>
+      <AppText tone="muted">
+        {`Geld aus der Kasse nehmen, z. B. für Getränke. Die Schulden der Spieler bleiben unverändert. In der Kasse: ${formatCurrency(cashbox.cashOnHandCents)}.`}
+      </AppText>
+      <Field label="Betrag (€)">
+        <Input value={withdrawAmount} onChangeText={setWithdrawAmount} keyboardType="decimal-pad" placeholder="18,50" />
+      </Field>
+      <Field label="Wofür?">
+        <Input value={withdrawNote} onChangeText={setWithdrawNote} placeholder="Kasten Bier, Snacks …" />
+        <Row gap={spacing.xs} wrap>
+          {WITHDRAW_PURPOSES.map((purpose) => (
+            <Chip key={purpose} label={purpose} selected={withdrawNote === purpose} onPress={() => setWithdrawNote(purpose)} />
+          ))}
+        </Row>
+      </Field>
+      <Button icon="cart-outline" tone="danger" disabled={!withdrawAmount.trim() || !withdrawNote.trim()} onPress={handleRecordWithdrawal}>
+        Entnahme buchen
+      </Button>
+    </Stack>
+  );
+
   const selectedDebt = data.data.debtors.find((row) => row.playerId === playerId)?.openDebtCents ?? 0;
 
   const paymentForm = (
@@ -196,14 +244,19 @@ export default function CashboxScreen() {
     </Stack>
   );
 
+  // Tablets: no page scroll – long lists scroll inside their card.
+  const scrollable = (node: React.ReactNode) =>
+    isTablet ? <InnerScroll contentStyle={{ gap: spacing.md }}>{node}</InnerScroll> : node;
+
   const debtsCard = (
-    <Card>
+    <Card style={isTablet ? { flex: 1, minHeight: 0 } : undefined}>
       <CardHeader
         overline="Offene Schulden"
         title="Wer muss noch zahlen?"
         icon="people-outline"
         aside={derived.open.length ? <Badge tone="danger">{derived.open.length} offen</Badge> : <Badge tone="success" icon="checkmark">Alles bezahlt</Badge>}
       />
+      {scrollable(<>
       {derived.bars.length ? (
         <BarChart
           data={derived.bars}
@@ -236,19 +289,23 @@ export default function CashboxScreen() {
           </View>
         </>
       ) : null}
+      </>)}
     </Card>
   );
 
   return (
     <>
-    <Screen>
+    <Screen fixedOnTablet>
       <ScreenHeader
         title="Kasse"
         context={`${data.data.cashboxLabel || "Getränkekasse"} · Zahlungen verbuchen, offene Beträge im Blick`}
         actions={
-          !isTablet ? (
-            <Button size="sm" icon="add" onPress={() => openPayment(playerId, 0)}>Zahlung</Button>
-          ) : null
+          <Row gap={spacing.xs}>
+            <Button size="sm" tone="secondary" icon="cart-outline" disabled={cashbox.cashOnHandCents <= 0} onPress={() => { Feedback.tap(); setWithdrawOpen(true); }}>
+              Entnahme
+            </Button>
+            {!isTablet ? <Button size="sm" icon="add" onPress={() => openPayment(playerId, 0)}>Zahlung</Button> : null}
+          </Row>
         }
       />
 
@@ -261,7 +318,7 @@ export default function CashboxScreen() {
             <Donut
               data={derived.donut}
               size={isTablet ? 160 : 136}
-              centerValue={formatCurrency(cashbox.totalPaymentsCents)}
+              centerValue={formatCurrency(cashbox.cashOnHandCents)}
               centerLabel="Kassenstand"
             />
           ) : (
@@ -269,7 +326,16 @@ export default function CashboxScreen() {
           )}
         </Card>
         <Row gap={isTablet ? spacing.md : spacing.sm} align="stretch">
-          <KpiTile tone="hero" icon="wallet" label="Kassenstand" value={cashbox.totalPaymentsCents} format={formatCurrency} hint="Bereits eingezahlt" />
+          <KpiTile
+            tone="hero"
+            icon="wallet"
+            label="Kassenstand"
+            value={cashbox.cashOnHandCents}
+            format={formatCurrency}
+            hint={cashbox.totalWithdrawalsCents > 0
+              ? `Eingezahlt ${formatCurrency(cashbox.totalPaymentsCents)} · entnommen ${formatCurrency(cashbox.totalWithdrawalsCents)}`
+              : "Bereits eingezahlt"}
+          />
           <KpiTile
             icon="alert-circle-outline"
             label="Offene Schulden"
@@ -282,11 +348,11 @@ export default function CashboxScreen() {
       </Split>
 
       {isTablet ? (
-        <Split weights={[7, 5]}>
+        <Split weights={[7, 5]} fill>
           {debtsCard}
-          <Card tone="accent">
+          <Card tone="accent" style={{ flex: 1, minHeight: 0 }}>
             <CardHeader overline="Zahlung" title="In die Kasse buchen" icon="cash-outline" />
-            {paymentForm}
+            {scrollable(paymentForm)}
           </Card>
         </Split>
       ) : (
@@ -298,6 +364,9 @@ export default function CashboxScreen() {
     </Screen>
     <BottomSheet visible={sheetOpen && !isTablet} onClose={() => setSheetOpen(false)} eyebrow="Zahlung" title="In die Kasse buchen">
       {paymentForm}
+    </BottomSheet>
+    <BottomSheet visible={withdrawOpen} onClose={() => setWithdrawOpen(false)} eyebrow="Entnahme" title="Geld aus der Kasse">
+      {withdrawalForm}
     </BottomSheet>
     </>
   );

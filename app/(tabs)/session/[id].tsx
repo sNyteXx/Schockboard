@@ -3,7 +3,9 @@ import * as Sharing from 'expo-sharing'
 import { LinearGradient } from 'expo-linear-gradient'
 import { useIsFocused, useLocalSearchParams, useRouter } from 'expo-router'
 import { forwardRef, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Share, Text, View } from 'react-native'
+import { Share, Text, View } from 'react-native'
+
+import { Alert } from '@/components/dialog'
 import Animated, { FadeIn, ReduceMotion } from 'react-native-reanimated'
 import { captureRef } from 'react-native-view-shot'
 
@@ -15,6 +17,7 @@ import { StepIndicator, type EveningStep } from '@/components/evening-steps'
 import { HideNavigationBar, KeepAwakeWhileLive } from '@/components/live-mode'
 import { enterFade, PressableScale } from '@/components/motion'
 import { PlayerBoard, type BoardPlayer } from '@/components/player-board'
+import { TourTarget, TOUR_TARGETS, useTourScreen } from '@/components/tour'
 import {
   Badge,
   Button,
@@ -24,6 +27,7 @@ import {
   EmptyState,
   Field,
   IconButton,
+  InnerScroll,
   Input,
   ListRow,
   LoadError,
@@ -130,6 +134,8 @@ export default function SessionDetailScreen() {
   const detailData = resource.data?.detail ?? null
   const currentDetail = detailData && detailData.session.id === id ? detailData : null
   const absenceMode: AbsencePenaltyMode = resource.data?.settings.absencePenaltyMode ?? 'full_average'
+  // The first-use tour only runs its evening steps on an open, loaded evening.
+  useTourScreen('evening', focused && currentDetail?.session.status === 'open')
 
   // Derived data is memoised on the loaded detail so typing in a form or
   // toggling a sheet never recomputes the board or the summary.
@@ -391,10 +397,18 @@ export default function SessionDetailScreen() {
     }
   }
 
+  // Tablets: no page scroll – steps fill the height, lists scroll inside.
+  const fixed = isTablet
+  const fillStyle = { flex: 1, minHeight: 0 } as const
+  const scrollIf = (node: React.ReactNode, contentStyle?: object) => (fixed ? <InnerScroll contentStyle={contentStyle}>{node}</InnerScroll> : node)
+
+  const chips = <AttendanceChips attendance={detail.attendance} disabled={isClosed} onToggle={toggleAttendance} />
   const attendanceCard = (
-    <Card>
+    <Card style={fixed ? fillStyle : undefined}>
       <CardHeader icon="people" overline="Aufstellung" title="Wer ist da?" aside={<Badge tone={presentCount > 0 ? 'accent' : 'default'}>{`${presentCount} / ${detail.attendance.length}`}</Badge>} />
-      <AttendanceChips attendance={detail.attendance} disabled={isClosed} onToggle={toggleAttendance} />
+      <TourTarget id={TOUR_TARGETS.attendance} enabled={!isClosed} style={fixed ? fillStyle : undefined}>
+        {scrollIf(chips)}
+      </TourTarget>
       {absentCoreCount > 0 && !isClosed ? (
         <View style={{ flexDirection: 'row', gap: spacing.xs, alignItems: 'flex-start' }}>
           <Ionicons name="information-circle-outline" size={16} color={colors.subtle} style={{ marginTop: 1 }} />
@@ -410,6 +424,16 @@ export default function SessionDetailScreen() {
     <Card>
       <CardHeader icon="person-add" overline="Spontan dabei" title="Gast hinzufügen" />
       <GuestForm value={guestName} onChange={setGuestName} onSubmit={handleGuest} />
+    </Card>
+  ) : null
+
+  const stakeCard = !isClosed ? (
+    <Card>
+      <CardHeader icon="pricetag" overline="Einsatz" title="Pro Verlust" />
+      <TourTarget id={TOUR_TARGETS.stake}>
+        <StakeStepper value={stake} onChange={setStake} onAdjust={adjustStake} />
+      </TourTarget>
+      <Text style={styles.hint}>Gilt für alle Verluste dieses Abends.</Text>
     </Card>
   ) : null
 
@@ -437,6 +461,8 @@ export default function SessionDetailScreen() {
       columns={tableMode ? Math.min(tableColumns, Math.max(players.length, 1)) : undefined}
       dense={tableMode}
       swipeToVoid={!tableMode}
+      tourTargetId={isClosed ? undefined : TOUR_TARGETS.tile}
+      fit={fixed}
     />
   )
 
@@ -467,6 +493,28 @@ export default function SessionDetailScreen() {
     </View>
   )
 
+  const protocol = isAdvanced ? (
+    <Card style={fixed ? fillStyle : undefined}>
+      <CardHeader icon="list" overline="Protokoll" title="Alle Ereignisse" aside={<Badge>{`${detail.timeline.length}`}</Badge>} />
+      {scrollIf(
+        <View>
+          {detail.timeline.map((entry) => {
+            const display = describeHistoryEntry(entry, { hideSessionTitle: true })
+            return (
+              <ListRow
+                key={entry.id}
+                leading={<FeedIcon kind={entry.kind} />}
+                title={display.title}
+                detail={`${formatDateTime(entry.createdAt)} · ${display.detail}`}
+                value={entry.amountCents !== null ? formatCurrency(entry.amountCents) : undefined}
+              />
+            )
+          })}
+        </View>,
+      )}
+    </Card>
+  ) : null
+
   const showActionBar = step === 'live' && !tableMode
   const liveActive = focused && step === 'live' && !isClosed
   const context = [
@@ -478,12 +526,41 @@ export default function SessionDetailScreen() {
   ].filter(Boolean).join(' · ')
   const statusBadge = isClosed ? <Badge icon="checkmark-done">Abgeschlossen</Badge> : <Badge tone="success" dot>LIVE</Badge>
   const wideSummary = isTablet
+  const stepStyle = [{ gap: spacing.md }, fixed && fillStyle]
+
+  const summaryMain = isClosed ? (
+    <ResultCard ref={resultRef} summary={summary} title={session.title} dateLabel={formatDate(session.startedAt)} themeId={runtime.themeId} wide={wideSummary} />
+  ) : (
+    <Card style={fixed ? fillStyle : undefined}>
+      <CardHeader icon="eye-outline" overline="Vorschau" title="So endet der Abend" aside={<Badge tone="warning" icon="time-outline">Noch offen</Badge>} />
+      {scrollIf(<SummaryBody summary={summary} wide={wideSummary} />)}
+    </Card>
+  )
+  const summaryActions = isClosed ? (
+    <Split>
+      <Button icon="image-outline" onPress={shareAsImage} loading={sharing}>{sharing ? 'Bild wird erstellt…' : 'Als Bild teilen'}</Button>
+      <Button tone="secondary" icon="chatbubble-ellipses-outline" onPress={shareAsText}>Als Text teilen</Button>
+    </Split>
+  ) : (
+    <>
+      <Split>
+        <Button tone="secondary" icon="arrow-back" onPress={() => goTo('live')}>Weiterspielen</Button>
+        <Button icon="flag" onPress={confirmClose} loading={closing}>{closing ? 'Schließe ab…' : 'Abend abschließen'}</Button>
+      </Split>
+      <View style={{ alignItems: 'center' }}>
+        <Button tone="ghost" size="sm" icon="trash-outline" onPress={confirmCancel} style={{ opacity: 0.85 }}>
+          Abend abbrechen – ohne Abrechnung verwerfen
+        </Button>
+      </View>
+    </>
+  )
 
   return (
     <>
       {liveActive ? <KeepAwakeWhileLive /> : null}
       {liveActive && tableMode ? <HideNavigationBar /> : null}
       <Screen
+        fixedOnTablet
         footer={showActionBar ? (
           <ActionBar
             isClosed={isClosed}
@@ -503,117 +580,103 @@ export default function SessionDetailScreen() {
           badge={statusBadge}
           actions={
             <>
-              {tableMode ? <View style={{ width: 440 }}><StepIndicator step={step} onChange={goTo} /></View> : null}
+              {tableMode ? <View style={{ width: 440 }}><StepIndicator step={step} onChange={goTo} tourEnabled={!isClosed} /></View> : null}
               {!isClosed ? <IconButton icon="ellipsis-horizontal" accessibilityLabel="Weitere Aktionen" onPress={() => setSheet('menu')} /> : null}
             </>
           }
         />
-        {!tableMode ? <StepIndicator step={step} onChange={goTo} /> : null}
+        {!tableMode ? <StepIndicator step={step} onChange={goTo} tourEnabled={!isClosed} /> : null}
 
         {step === 'attendance' ? (
-          <Animated.View key="attendance" entering={enterStep} style={{ gap: spacing.md }}>
-            <Split weights={[7, 5]}>
+          <Animated.View key="attendance" entering={enterStep} style={stepStyle}>
+            <Split weights={[7, 5]} fill={fixed}>
               {attendanceCard}
-              <>
-                {guestCard}
-                {!isClosed ? (
-                  <Card>
-                    <CardHeader icon="pricetag" overline="Einsatz" title="Pro Verlust" />
-                    <StakeStepper value={stake} onChange={setStake} onAdjust={adjustStake} />
-                    <Text style={styles.hint}>Gilt für alle Verluste dieses Abends.</Text>
-                  </Card>
-                ) : null}
-              </>
+              {fixed ? (
+                <InnerScroll contentStyle={{ gap: spacing.md }}>
+                  {guestCard}
+                  {stakeCard}
+                </InnerScroll>
+              ) : (
+                <>
+                  {guestCard}
+                  {stakeCard}
+                </>
+              )}
             </Split>
             {isClosed ? (
               <Button size="lg" iconRight="arrow-forward" onPress={() => goTo('live')}>Zum Brett</Button>
             ) : (
-              <Button size="lg" iconRight={presentCount === 0 ? undefined : 'arrow-forward'} onPress={startEvening} disabled={presentCount === 0}>
-                {presentCount === 0 ? 'Mindestens einen Spieler auswählen' : `Los geht's – ${presentCount} am Tisch`}
-              </Button>
+              <TourTarget id={TOUR_TARGETS.go} onPress={presentCount > 0 ? startEvening : undefined}>
+                <Button size="lg" iconRight={presentCount === 0 ? undefined : 'arrow-forward'} onPress={startEvening} disabled={presentCount === 0}>
+                  {presentCount === 0 ? 'Mindestens einen Spieler auswählen' : `Los geht's – ${presentCount} am Tisch`}
+                </Button>
+              </TourTarget>
             )}
           </Animated.View>
         ) : null}
 
         {step === 'live' && tableMode ? (
-          <Animated.View key="live-table" entering={enterStep} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md }}>
-            <View style={{ flex: 0.85, minWidth: 0, gap: spacing.md }}>
+          <Animated.View key="live-table" entering={enterStep} style={[{ flexDirection: 'row', alignItems: fixed ? 'stretch' : 'flex-start', gap: spacing.md }, fixed && fillStyle]}>
+            <View style={[{ flex: 0.85, minWidth: 0, gap: spacing.md }, fixed && { minHeight: 0 }]}>
               {attendanceCard}
               {guestCard}
             </View>
-            <View style={{ flex: 2.6, minWidth: 0, gap: spacing.md }}>
+            <View style={[{ flex: 2.6, minWidth: 0, gap: spacing.md }, fixed && { minHeight: 0 }]}>
               {board}
               {noteBooking}
             </View>
-            <View style={{ flex: 1, minWidth: 0, gap: spacing.md }}>
+            <View style={[{ flex: 1, minWidth: 0, gap: spacing.md }, fixed && { minHeight: 0 }]}>
               {!isClosed && players.length > 0 ? (
-                <Card>
-                  <CardHeader icon="beer" overline="Sonderposten" title="Bierrunde" />
-                  {beerForm}
-                </Card>
+                <TourTarget id={TOUR_TARGETS.beer} style={fixed ? { flexShrink: 1, minHeight: 0, maxHeight: '62%' } : undefined}>
+                  <Card style={fixed ? { flexShrink: 1, minHeight: 0 } : undefined}>
+                    <CardHeader icon="beer" overline="Sonderposten" title="Bierrunde" />
+                    {fixed ? <InnerScroll fill={false}>{beerForm}</InnerScroll> : beerForm}
+                  </Card>
+                </TourTarget>
               ) : null}
-              <LiveFeed timeline={timeline} limit={8} />
+              <LiveFeed timeline={timeline} limit={fixed ? 40 : 8} fill={fixed} />
               <Button tone="secondary" iconRight="arrow-forward" onPress={() => goTo('summary')}>{isClosed ? 'Zur Zusammenfassung' : 'Zum Abschluss'}</Button>
             </View>
           </Animated.View>
         ) : null}
 
         {step === 'live' && !tableMode ? (
-          <Animated.View key="live" entering={enterStep} style={{ gap: spacing.md }}>
+          <Animated.View key="live" entering={enterStep} style={stepStyle}>
             {metrics}
-            {board}
-            {noteBooking}
-            <LiveFeed timeline={timeline} limit={10} />
+            {fixed ? (
+              <View style={[{ flexDirection: 'row', alignItems: 'stretch', gap: spacing.md }, fillStyle]}>
+                <View style={{ flex: 3, minWidth: 0, minHeight: 0, gap: spacing.md }}>
+                  {board}
+                  {noteBooking}
+                </View>
+                <View style={{ flex: 2, minWidth: 0, minHeight: 0 }}>
+                  <LiveFeed timeline={timeline} limit={40} fill />
+                </View>
+              </View>
+            ) : (
+              <>
+                {board}
+                {noteBooking}
+                <LiveFeed timeline={timeline} limit={10} />
+              </>
+            )}
           </Animated.View>
         ) : null}
 
         {step === 'summary' ? (
-          <Animated.View key="summary" entering={enterStep} style={{ gap: spacing.md }}>
-            {isClosed ? (
-              <>
-                <ResultCard ref={resultRef} summary={summary} title={session.title} dateLabel={formatDate(session.startedAt)} themeId={runtime.themeId} wide={wideSummary} />
-                <Split>
-                  <Button icon="image-outline" onPress={shareAsImage} loading={sharing}>{sharing ? 'Bild wird erstellt…' : 'Als Bild teilen'}</Button>
-                  <Button tone="secondary" icon="chatbubble-ellipses-outline" onPress={shareAsText}>Als Text teilen</Button>
-                </Split>
-              </>
+          <Animated.View key="summary" entering={enterStep} style={stepStyle}>
+            {fixed ? (
+              <View style={[{ flexDirection: 'row', alignItems: 'stretch', gap: spacing.md }, fillStyle]}>
+                <View style={{ flex: 7, minWidth: 0, minHeight: 0 }}>
+                  {isClosed ? <InnerScroll>{summaryMain}</InnerScroll> : summaryMain}
+                </View>
+                {protocol ? <View style={{ flex: 4, minWidth: 0, minHeight: 0 }}>{protocol}</View> : null}
+              </View>
             ) : (
-              <>
-                <Card>
-                  <CardHeader icon="eye-outline" overline="Vorschau" title="So endet der Abend" aside={<Badge tone="warning" icon="time-outline">Noch offen</Badge>} />
-                  <SummaryBody summary={summary} wide={wideSummary} />
-                </Card>
-                <Split>
-                  <Button tone="secondary" icon="arrow-back" onPress={() => goTo('live')}>Weiterspielen</Button>
-                  <Button icon="flag" onPress={confirmClose} loading={closing}>{closing ? 'Schließe ab…' : 'Abend abschließen'}</Button>
-                </Split>
-                <View style={{ alignItems: 'center' }}>
-                  <Button tone="ghost" size="sm" icon="trash-outline" onPress={confirmCancel} style={{ opacity: 0.85 }}>
-                    Abend abbrechen – ohne Abrechnung verwerfen
-                  </Button>
-                </View>
-              </>
+              summaryMain
             )}
-
-            {isAdvanced ? (
-              <Card>
-                <CardHeader icon="list" overline="Protokoll" title="Alle Ereignisse" aside={<Badge>{`${detail.timeline.length}`}</Badge>} />
-                <View>
-                  {detail.timeline.map((entry) => {
-                    const display = describeHistoryEntry(entry, { hideSessionTitle: true })
-                    return (
-                      <ListRow
-                        key={entry.id}
-                        leading={<FeedIcon kind={entry.kind} />}
-                        title={display.title}
-                        detail={`${formatDateTime(entry.createdAt)} · ${display.detail}`}
-                        value={entry.amountCents !== null ? formatCurrency(entry.amountCents) : undefined}
-                      />
-                    )
-                  })}
-                </View>
-              </Card>
-            ) : null}
+            {summaryActions}
+            {!fixed ? protocol : null}
           </Animated.View>
         ) : null}
       </Screen>
@@ -765,6 +828,7 @@ const FEED_ICONS: Record<HistoryEntry['kind'], { icon: IconName; tone: () => { f
   correction: { icon: 'arrow-undo', tone: () => ({ fg: colors.info, bg: colors.surfaceSoft }) },
   absence: { icon: 'person-remove', tone: () => ({ fg: colors.danger, bg: colors.dangerSoft }) },
   payment: { icon: 'wallet', tone: () => ({ fg: colors.success, bg: colors.successSoft }) },
+  withdrawal: { icon: 'cart', tone: () => ({ fg: colors.warning, bg: colors.warningSoft }) },
   audit: { icon: 'document-text-outline', tone: () => ({ fg: colors.muted, bg: colors.surfaceSoft }) },
 }
 
@@ -788,7 +852,31 @@ function feedDetail(entry: HistoryEntry) {
   return [FEED_KIND[entry.kind] ?? entry.kind, time, generic ? null : entry.message].filter(Boolean).join(' · ')
 }
 
-function LiveFeed({ timeline, limit }: { timeline: HistoryEntry[]; limit: number }) {
+function LiveFeed({ timeline, limit, fill = false }: { timeline: HistoryEntry[]; limit: number; fill?: boolean }) {
+  const list = timeline.length ? (
+    <View>
+      {timeline.slice(0, limit).map((entry) => (
+        <Animated.View key={entry.id} entering={enterFade}>
+          <ListRow
+            leading={<FeedIcon kind={entry.kind} />}
+            title={entry.playerName ?? 'System'}
+            detail={feedDetail(entry)}
+            value={entry.amountCents !== null ? formatCurrency(Math.abs(entry.amountCents)) : undefined}
+            valueTone={entry.kind === 'correction' ? 'muted' : 'default'}
+          />
+        </Animated.View>
+      ))}
+    </View>
+  ) : <EmptyState icon="time-outline">Noch keine Buchungen.</EmptyState>
+  if (fill) {
+    // Tablets: the feed takes the rest of its column and scrolls inside.
+    return (
+      <Card style={{ flex: 1, minHeight: 0 }}>
+        <CardHeader icon="pulse" overline="Live-Feed" title="Letzte Buchungen" />
+        <InnerScroll>{list}</InnerScroll>
+      </Card>
+    )
+  }
   return (
     <Card>
       <CardHeader icon="pulse" overline="Live-Feed" title="Letzte Buchungen" />
@@ -823,7 +911,9 @@ function ActionBar({ isClosed, canBook, onBeer, onGuest, onFinish }: {
   return (
     <View style={styles.actionBar}>
       {!isClosed ? (
-        <Button tone="secondary" icon="beer" accessibilityLabel="Bierrunde" disabled={!canBook} onPress={() => { Feedback.tap(); onBeer() }}>Bierrunde</Button>
+        <TourTarget id={TOUR_TARGETS.beer}>
+          <Button tone="secondary" icon="beer" accessibilityLabel="Bierrunde" disabled={!canBook} onPress={() => { Feedback.tap(); onBeer() }}>Bierrunde</Button>
+        </TourTarget>
       ) : null}
       {!isClosed ? (
         <Button tone="secondary" icon="person-add" accessibilityLabel="Gast" onPress={() => { Feedback.tap(); onGuest() }}>Gast</Button>

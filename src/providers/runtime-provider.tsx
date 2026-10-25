@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { ActivityIndicator, Alert, SafeAreaView, StyleSheet, Text } from 'react-native'
+import { ActivityIndicator, SafeAreaView, StyleSheet, Text } from 'react-native'
+
+import { Alert } from '@/components/dialog'
 
 import type { AuthAccount, FlashMessage, ThemeId, ViewMode } from '@/domain/types'
 import { DatabaseService } from '@/services/database-service'

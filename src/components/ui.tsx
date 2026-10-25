@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
 import { Picker } from "@react-native-picker/picker";
 import { LinearGradient } from "expo-linear-gradient";
-import { Children, forwardRef, useEffect } from "react";
+import { Children, forwardRef, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   ScrollView,
@@ -26,6 +26,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 
 import { AnimatedNumber, PressableScale, enterCard, enterFade } from "@/components/motion";
 import { Sparkline } from "@/components/charts/sparkline";
+import { TourScrollContext, useTourScroller } from "@/components/tour/tour-target";
 import { useDeviceLayout } from "@/hooks/use-device-layout";
 import { colors, radius, spacing } from "@/theme/tokens";
 import type { TypeVariant } from "@/theme/typography";
@@ -201,28 +202,99 @@ export function Screen({
   children,
   footer,
   maxWidth = 1680,
-  scroll = true,
+  scroll: scrollProp = true,
+  fixedOnTablet = false,
 }: {
   children: React.ReactNode;
   footer?: React.ReactNode;
   maxWidth?: number;
   scroll?: boolean;
+  /**
+   * Tablets: no page scroll – the content fills the window height (flex) and
+   * only inner lists scroll (<InnerScroll>). Phones keep page scrolling.
+   */
+  fixedOnTablet?: boolean;
 }) {
   const styles = useStyles();
   const { pagePadding, isTablet } = useDeviceLayout();
+  const scroll = scrollProp && !(fixedOnTablet && isTablet);
   const insets = useSafeAreaInsets();
   const content = { maxWidth, paddingHorizontal: pagePadding, gap: isTablet ? spacing.lg - 4 : spacing.md };
+  // Lets the first-use tour scroll a highlighted target into view.
+  const scrollRef = useRef<ScrollView>(null);
+  const innerRef = useRef<View>(null);
+  const scroller = useTourScroller(scrollRef, innerRef);
   return (
     <SafeAreaView edges={["top", "left", "right"]} style={styles.screen}>
       {scroll ? (
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.scroll, content, isTablet && { paddingBottom: spacing.xxl + insets.bottom }]}>
-          {children}
+        <ScrollView
+          ref={scrollRef}
+          innerViewRef={innerRef as React.RefObject<View>}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={[styles.scroll, content, isTablet && { paddingBottom: spacing.xxl + insets.bottom }]}
+        >
+          <TourScrollContext.Provider value={scroller}>{children}</TourScrollContext.Provider>
         </ScrollView>
       ) : (
-        <View style={[styles.scroll, content, { flex: 1 }]}>{children}</View>
+        <View style={[styles.scroll, content, { flex: 1, minHeight: 0, paddingBottom: isTablet ? spacing.lg : spacing.xxl }]}>{children}</View>
       )}
       {footer ? <View style={{ paddingBottom: isTablet ? insets.bottom : 0, backgroundColor: colors.tabBar }}>{footer}</View> : null}
     </SafeAreaView>
+  );
+}
+
+/** True when the current screen uses the fixed, non-scrolling tablet layout. */
+export function useFixedLayout() {
+  return useDeviceLayout().isTablet;
+}
+
+/**
+ * Scrolling region inside a fixed tablet layout (lists, feeds, long chip
+ * sets). Fills the remaining height of its flex parent; tour targets inside
+ * stay measurable and can be scrolled into view.
+ */
+export function InnerScroll({
+  children,
+  style,
+  contentStyle,
+  fill = true,
+}: {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  contentStyle?: StyleProp<ViewStyle>;
+  /** flex: 1 inside the parent (default). false = size to content up to the parent's max height. */
+  fill?: boolean;
+}) {
+  const scrollRef = useRef<ScrollView>(null);
+  const innerRef = useRef<View>(null);
+  const scroller = useTourScroller(scrollRef, innerRef);
+  return (
+    <ScrollView
+      ref={scrollRef}
+      innerViewRef={innerRef as React.RefObject<View>}
+      nestedScrollEnabled
+      keyboardShouldPersistTaps="handled"
+      style={[fill ? { flex: 1, minHeight: 0 } : { flexGrow: 0, flexShrink: 1, minHeight: 0 }, style]}
+      contentContainerStyle={contentStyle}
+    >
+      <TourScrollContext.Provider value={scroller}>{children}</TourScrollContext.Provider>
+    </ScrollView>
+  );
+}
+
+/** Flex region that reports its measured height (charts that need a number). */
+export function MeasuredFill({ children, style, minHeight = 0 }: { children: (height: number, width: number) => React.ReactNode; style?: StyleProp<ViewStyle>; minHeight?: number }) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  return (
+    <View
+      style={[{ flex: 1, minHeight }, style]}
+      onLayout={(event) => {
+        const { width, height } = event.nativeEvent.layout;
+        setSize((current) => (Math.abs(current.width - width) < 1 && Math.abs(current.height - height) < 1 ? current : { width: Math.floor(width), height: Math.floor(height) }));
+      }}
+    >
+      {size.height > 0 ? children(size.height, size.width) : null}
+    </View>
   );
 }
 
@@ -283,16 +355,29 @@ export function Row({
  * Side-by-side on tablets, stacked on phones. `weights` gives column spans
  * (12-column feel, e.g. [8, 4]); default equal.
  */
-export function Split({ children, gap, weights, breakpoint = "medium" }: { children: React.ReactNode; gap?: number; weights?: number[]; breakpoint?: "medium" | "expanded" }) {
+export function Split({
+  children,
+  gap,
+  weights,
+  breakpoint = "medium",
+  fill = false,
+}: {
+  children: React.ReactNode;
+  gap?: number;
+  weights?: number[];
+  breakpoint?: "medium" | "expanded";
+  /** Side by side: take the remaining height, columns stretch (fixed tablet layouts). */
+  fill?: boolean;
+}) {
   const { sizeClass, isTablet } = useDeviceLayout();
   const items = Children.toArray(children).filter(Boolean);
   const sideBySide = breakpoint === "expanded" ? sizeClass === "expanded" : isTablet;
   const resolvedGap = gap ?? (isTablet ? spacing.lg - 4 : spacing.md);
   if (!sideBySide) return <View style={{ gap: resolvedGap }}>{items}</View>;
   return (
-    <View style={{ flexDirection: "row", alignItems: "flex-start", gap: resolvedGap }}>
+    <View style={[{ flexDirection: "row", alignItems: fill ? "stretch" : "flex-start", gap: resolvedGap }, fill && { flex: 1, minHeight: 0 }]}>
       {items.map((child, index) => (
-        <View key={index} style={{ flex: weights?.[index] ?? 1, minWidth: 0, gap: resolvedGap }}>{child}</View>
+        <View key={index} style={[{ flex: weights?.[index] ?? 1, minWidth: 0, gap: resolvedGap }, fill && { minHeight: 0 }]}>{child}</View>
       ))}
     </View>
   );

@@ -1,11 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons";
-import { useRouter } from "expo-router";
+import { useIsFocused, useRouter } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 
 import { PlayerAvatar } from "@/components/avatar";
 import { Sparkline, StackedBar } from "@/components/charts";
 import { PressableScale } from "@/components/motion";
+import { TourTarget, TOUR_TARGETS, useTourScreen } from "@/components/tour";
 import {
   AppText,
   Badge,
@@ -59,6 +60,8 @@ export default function SessionsScreen() {
   const [stake, setStake] = useState("1,00");
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const focused = useIsFocused();
+  useTourScreen("sessions", focused && !!data.data);
 
   // The configured default stake must be the starting value for new nights.
   const configuredStake = data.data?.settings.defaultStakeCents;
@@ -185,9 +188,13 @@ export default function SessionsScreen() {
             </Field>
           ) : null}
           {hasOpenSession ? (
-            <Button tone="secondary" icon="play" onPress={() => router.push(`/session/${openSession.id}`)}>Offenen Abend öffnen</Button>
+            <TourTarget id={TOUR_TARGETS.sessionsCreate} onPress={() => router.push(`/session/${openSession.id}`)}>
+              <Button tone="secondary" icon="play" onPress={() => router.push(`/session/${openSession.id}`)}>Offenen Abend öffnen</Button>
+            </TourTarget>
           ) : (
-            <Button size="lg" icon="play" onPress={handleCreateSession} loading={submitting}>Spielabend starten</Button>
+            <TourTarget id={TOUR_TARGETS.sessionsCreate} onPress={() => { if (!submitting) void handleCreateSession(); }}>
+              <Button size="lg" icon="play" onPress={handleCreateSession} loading={submitting}>Spielabend starten</Button>
+            </TourTarget>
           )}
           {!hasOpenSession ? (
             <AppText variant="caption" tone="subtle">Alle aktiven Stammspieler werden automatisch geladen.</AppText>

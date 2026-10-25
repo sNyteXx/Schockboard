@@ -11,8 +11,10 @@ import {
   Chip,
   EmptyState,
   Grid,
+  InnerScroll,
   KpiTile,
   LoadError,
+  MeasuredFill,
   Screen,
   ScreenHeader,
   Segmented,
@@ -26,6 +28,7 @@ import { getSeasonLossSeries } from '@/db/chart-queries'
 import { getStatistics, type PlayerStats } from '@/db/stats-queries'
 import { formatCurrency, formatDate } from '@/domain/format'
 import { useAsyncResource } from '@/hooks/use-async-resource'
+import { useDeviceLayout } from '@/hooks/use-device-layout'
 import { useRuntime } from '@/providers/runtime-provider'
 import { Feedback } from '@/services/haptics'
 import { colors, playerColor, spacing, withAlpha } from '@/theme/tokens'
@@ -53,6 +56,7 @@ function compactEuro(cents: number) {
 
 export default function StatsScreen() {
   const runtime = useRuntime()
+  const { isTablet } = useDeviceLayout()
   const [season, setSeason] = useState<string | null>(null)
   const [metric, setMetric] = useState<Metric>('lossCount')
   const data = useAsyncResource(
@@ -120,8 +124,14 @@ export default function StatsScreen() {
     recordTiles.push({ key: 'wild', label: 'Wildester Abend', value: `${stats.wildestEvening.lossCount} Verluste`, hint: `${stats.wildestEvening.title} · ${formatDate(stats.wildestEvening.startedAt)}`, icon: 'flame-outline' })
   }
 
+  // Tablets: no page scroll – cards fill the height, lists scroll inside.
+  const fillCard = isTablet ? { flex: 1, minHeight: 0 } : undefined
+  const scrollable = (node: React.ReactNode, fill = true) =>
+    isTablet ? <InnerScroll fill={fill}>{node}</InnerScroll> : node
+  const legendReserve = 28 * Math.ceil(derived.lineSeries.length / 4) + 12
+
   return (
-    <Screen>
+    <Screen fixedOnTablet>
       <ScreenHeader
         title="Statistik"
         context={`${season ? `Saison ${season}` : 'Alle Saisons'} · ${stats.eveningCount} ${stats.eveningCount === 1 ? 'abgeschlossener Abend' : 'abgeschlossene Abende'}`}
@@ -149,37 +159,48 @@ export default function StatsScreen() {
             <KpiTile label="Bierrunden" icon="beer-outline" value={stats.totalBeerRoundCount} format={(value) => `${value}`} hint={formatCurrency(stats.totalBeerRoundCents)} />
           </Grid>
 
-          <Card>
-            <CardHeader overline="Verlauf" title="Verluste kumuliert" icon="trending-up" aside={<Badge>{`${timeline.labels.length} Abende`}</Badge>} />
-            {derived.lineSeries.length > 0 ? (
-              <LineChart series={derived.lineSeries} labels={timeline.labels} height={220} formatY={compactEuro} legend area={derived.lineSeries.length === 1} />
-            ) : (
-              <EmptyState icon="trending-up">In diesem Zeitraum wurde noch nichts verloren.</EmptyState>
-            )}
-          </Card>
+          <Split weights={[7, 5]} fill>
+            <View style={isTablet ? { flex: 1, minHeight: 0, gap: spacing.lg - 4 } : { gap: spacing.md }}>
+              <Card style={fillCard}>
+                <CardHeader overline="Verlauf" title="Verluste kumuliert" icon="trending-up" aside={<Badge>{`${timeline.labels.length} Abende`}</Badge>} />
+                {derived.lineSeries.length === 0 ? (
+                  <EmptyState icon="trending-up">In diesem Zeitraum wurde noch nichts verloren.</EmptyState>
+                ) : isTablet ? (
+                  <MeasuredFill minHeight={120}>
+                    {(height) => (
+                      <LineChart series={derived.lineSeries} labels={timeline.labels} height={Math.max(100, height - legendReserve)} formatY={compactEuro} legend area={derived.lineSeries.length === 1} />
+                    )}
+                  </MeasuredFill>
+                ) : (
+                  <LineChart series={derived.lineSeries} labels={timeline.labels} height={220} formatY={compactEuro} legend area={derived.lineSeries.length === 1} />
+                )}
+              </Card>
 
-          <Split weights={[7, 5]}>
-            <Card>
-              <CardHeader overline="Rangliste" title={season ? `Saison ${season}` : 'Ewige Tabelle'} icon="trophy-outline" aside={<Badge>{`${ranking.length} Spieler`}</Badge>} />
-              <Segmented options={METRICS.map(({ value, label }) => ({ value, label }))} value={metric} onChange={(value) => { Feedback.tap(); setMetric(value) }} />
-              <BarChart key={`${metric}-${season ?? 'all'}`} data={ranking} showRank barHeight={8} />
-            </Card>
+              <Card style={isTablet ? { flex: 1.2, minHeight: 0 } : undefined}>
+                <CardHeader overline="Rangliste" title={season ? `Saison ${season}` : 'Ewige Tabelle'} icon="trophy-outline" aside={<Badge>{`${ranking.length} Spieler`}</Badge>} />
+                <Segmented options={METRICS.map(({ value, label }) => ({ value, label }))} value={metric} onChange={(value) => { Feedback.tap(); setMetric(value) }} />
+                {scrollable(<BarChart key={`${metric}-${season ?? 'all'}`} data={ranking} showRank barHeight={8} />)}
+              </Card>
+            </View>
 
-            <Stack>
+            <View style={isTablet ? { flex: 1, minHeight: 0, gap: spacing.lg - 4 } : { gap: spacing.md }}>
               {recordTiles.length ? (
-                <Card>
+                <Card style={isTablet ? { flexShrink: 1, minHeight: 0, maxHeight: '55%' } : undefined}>
                   <CardHeader overline="Fun Facts" title="Rekorde" icon="ribbon-outline" />
-                  <Grid columns={{ compact: 2, medium: 2, expanded: 2 }}>
-                    {recordTiles.map((tile) => (
-                      <StatTile key={tile.key} label={tile.label} value={tile.value} hint={tile.hint} icon={tile.icon} tone={tile.key === 'pech' || tile.key === 'wild' ? 'warning' : 'accent'} />
-                    ))}
-                  </Grid>
+                  {scrollable(
+                    <Grid columns={{ compact: 2, medium: 2, expanded: 2 }}>
+                      {recordTiles.map((tile) => (
+                        <StatTile key={tile.key} label={tile.label} value={tile.value} hint={tile.hint} icon={tile.icon} tone={tile.key === 'pech' || tile.key === 'wild' ? 'warning' : 'accent'} />
+                      ))}
+                    </Grid>,
+                    false,
+                  )}
                 </Card>
               ) : null}
 
-              <Card>
+              <Card style={fillCard}>
                 <CardHeader overline="Anwesenheit" title="Abende pro Spieler" icon="people-outline" />
-                <Stack gap={spacing.sm}>
+                {scrollable(<Stack gap={spacing.sm}>
                   {derived.attendance.map((row) => (
                     <View key={row.playerId} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
                       <PlayerAvatar id={row.playerId} name={row.playerName} size={28} />
@@ -202,13 +223,13 @@ export default function StatsScreen() {
                       </View>
                     </View>
                   ))}
-                </Stack>
+                </Stack>)}
                 <View style={{ flexDirection: 'row', gap: spacing.md }}>
                   <LegendDot color={colors.success} label="anwesend" />
                   <LegendDot color={withAlpha(colors.danger, 0.6)} label="gefehlt" />
                 </View>
               </Card>
-            </Stack>
+            </View>
           </Split>
         </>
       )}

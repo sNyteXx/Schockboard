@@ -2,6 +2,8 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { Text, View } from 'react-native'
 
 import { PressableScale } from '@/components/motion'
+import { TourTarget } from '@/components/tour/tour-target'
+import { TOUR_TARGETS } from '@/components/tour/tour-steps'
 import { Feedback } from '@/services/haptics'
 import { colors, radius, spacing } from '@/theme/tokens'
 import { themedStyles } from '@/theme/use-theme'
@@ -44,7 +46,7 @@ const useStyles = themedStyles(({ c, t }) => ({
 }))
 
 /** Compact, tappable 3-step indicator for the evening assistant. */
-export function StepIndicator({ step, onChange }: { step: EveningStep; onChange: (step: EveningStep) => void }) {
+export function StepIndicator({ step, onChange, tourEnabled = false }: { step: EveningStep; onChange: (step: EveningStep) => void; tourEnabled?: boolean }) {
   const styles = useStyles()
   const activeIndex = EVENING_STEPS.findIndex((item) => item.id === step)
 
@@ -54,7 +56,7 @@ export function StepIndicator({ step, onChange }: { step: EveningStep; onChange:
         const active = index === activeIndex
         const done = index < activeIndex
         const iconName = (done ? 'checkmark-circle' : active ? item.icon : `${item.icon}-outline`) as IconName
-        return (
+        const pill = (
           <PressableScale
             key={item.id}
             accessibilityRole="tab"
@@ -73,6 +75,17 @@ export function StepIndicator({ step, onChange }: { step: EveningStep; onChange:
               {item.label}
             </Text>
           </PressableScale>
+        )
+        if (item.id !== 'summary' || !tourEnabled) return pill
+        return (
+          <TourTarget
+            key={item.id}
+            id={TOUR_TARGETS.finish}
+            onPress={() => { if (!active) onChange(item.id) }}
+            style={{ flex: 1, minWidth: 0 }}
+          >
+            {pill}
+          </TourTarget>
         )
       })}
     </View>

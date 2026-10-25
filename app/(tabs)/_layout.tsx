@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { BrandEmblem } from "@/components/brand";
 import { PressableScale } from "@/components/motion";
+import { TourProvider, TourTarget, TOUR_TARGETS } from "@/components/tour";
 import { AuthGate, useRuntime } from "@/providers/runtime-provider";
 import { Feedback } from "@/services/haptics";
 import { colors, radius, spacing } from "@/theme/tokens";
@@ -45,7 +46,7 @@ function AppTabBar({ state, navigation, rail, themeId }: BottomTabBarProps & { r
         navigation.navigate(route.name, route.params);
       }
     };
-    return (
+    const item = (
       <PressableScale
         key={tab.name}
         accessibilityRole="tab"
@@ -53,7 +54,7 @@ function AppTabBar({ state, navigation, rail, themeId }: BottomTabBarProps & { r
         accessibilityLabel={tab.title}
         onPress={onPress}
         pressedScale={0.92}
-        style={{ alignItems: "center", justifyContent: "center", gap: 4, flex: rail ? undefined : 1, minHeight: rail ? 64 : 56, width: rail ? "100%" : undefined }}
+        style={{ alignItems: "center", justifyContent: "center", gap: 4, minHeight: rail ? 64 : 56, width: "100%" }}
       >
         <View
           style={{
@@ -74,6 +75,12 @@ function AppTabBar({ state, navigation, rail, themeId }: BottomTabBarProps & { r
           {tab.title}
         </Text>
       </PressableScale>
+    );
+    if (tab.name !== "cashbox") return <View key={tab.name} style={{ flex: rail ? undefined : 1, width: rail ? "100%" : undefined }}>{item}</View>;
+    return (
+      <TourTarget key={tab.name} id={TOUR_TARGETS.cashboxTab} onPress={onPress} style={{ flex: rail ? undefined : 1, width: rail ? "100%" : undefined }}>
+        {item}
+      </TourTarget>
     );
   });
 
@@ -124,6 +131,7 @@ export default function TabsLayout() {
 
   return (
     <AuthGate>
+      <TourProvider>
       <Tabs
         tabBar={(props) => <AppTabBar {...props} rail={isTablet} themeId={runtime.themeId} />}
         screenOptions={{
@@ -137,6 +145,7 @@ export default function TabsLayout() {
         ))}
         <Tabs.Screen name="session/[id]" options={{ href: null, title: "Spielabend" }} />
       </Tabs>
+      </TourProvider>
     </AuthGate>
   );
 }

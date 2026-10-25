@@ -1,6 +1,6 @@
 import Ionicons from '@expo/vector-icons/Ionicons'
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { Text, View } from 'react-native'
+import { ScrollView, Text, View } from 'react-native'
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable'
 import Animated, {
   FadeIn,
@@ -15,7 +15,9 @@ import Animated, {
 } from 'react-native-reanimated'
 
 import { PlayerAvatar } from '@/components/avatar'
+import { fitBoardGrid, fittedTileMetrics } from '@/components/board-fit'
 import { CALM_EASING, PressableScale } from '@/components/motion'
+import { TourTarget } from '@/components/tour/tour-target'
 import { Badge } from '@/components/ui'
 import { formatCurrency } from '@/domain/format'
 import { useDeviceLayout } from '@/hooks/use-device-layout'
@@ -95,6 +97,8 @@ function VoidAction({ progress }: { progress: SharedValue<number> }) {
 type TileProps = {
   player: BoardPlayer
   width: number | '100%'
+  /** Fixed tile height (fitted tablet board); sizes counter and buttons. */
+  height?: number
   /** Large scoreboard sizing (table mode on big tablets). */
   big: boolean
   leader: boolean
@@ -105,7 +109,7 @@ type TileProps = {
 }
 
 const PlayerTile = memo(
-  function PlayerTile({ player, width, big, leader, swipeToVoid, isClosed, onAdd, onRemove }: TileProps) {
+  function PlayerTile({ player, width, height, big, leader, swipeToVoid, isClosed, onAdd, onRemove }: TileProps) {
     const styles = useStyles()
     const { layout } = useTheme()
     const reduceMotion = useReducedMotion()
@@ -136,9 +140,13 @@ const PlayerTile = memo(
     const canRemove = !isClosed && player.lossCount > 0
 
     // Button sizes: phones 56, tablets 64, table mode ≥ 80 dp.
-    const buttonHeight = big ? Math.round(72 * layout.typeScale) : layout.isTablet ? 64 : 56
-    const minusWidth = big ? Math.round(buttonHeight * 0.95) : buttonHeight - 8
-    const avatarSize = big ? 44 : layout.isTablet ? 40 : 36
+    // Fitted tablet board: everything scales with the tile height (+ ≥ 64 dp).
+    const fitted = height !== undefined ? fittedTileMetrics(height) : null
+    const buttonHeight = fitted ? fitted.buttonHeight : big ? Math.round(72 * layout.typeScale) : layout.isTablet ? 64 : 56
+    const minusWidth = big || fitted ? Math.round(buttonHeight * 0.95) : buttonHeight - 8
+    const avatarSize = fitted ? fitted.avatarSize : big ? 44 : layout.isTablet ? 40 : 36
+    const plusIcon = fitted ? fitted.plusIcon : big ? 44 : 34
+    const minusIcon = fitted ? fitted.minusIcon : big ? 30 : 24
 
     function handleAdd() {
       const now = Date.now()
@@ -157,7 +165,13 @@ const PlayerTile = memo(
       <Animated.View
         entering={FadeIn.duration(220).reduceMotion(ReduceMotion.System)}
         layout={LinearTransition.duration(200).easing(CALM_EASING).reduceMotion(ReduceMotion.System)}
-        style={[styles.tile, leader && styles.tileLeader, { width: swipeToVoid ? '100%' : width }, big && { padding: spacing.md, gap: spacing.md }]}
+        style={[
+          styles.tile,
+          leader && styles.tileLeader,
+          { width: swipeToVoid ? '100%' : width },
+          big && { padding: spacing.md, gap: spacing.md },
+          fitted && { height, padding: fitted.padding, gap: spacing.xs, justifyContent: 'space-between' },
+        ]}
       >
         <Animated.View pointerEvents="none" style={[styles.flash, glowStyle]} />
         <View style={styles.nameRow}>
@@ -177,7 +191,7 @@ const PlayerTile = memo(
 
         <View style={styles.countRow}>
           <View>
-            <Animated.Text style={[styles.count, counterStyle, { transformOrigin: 'left bottom' }]} accessibilityLabel={`${player.lossCount} Verluste`}>
+            <Animated.Text style={[styles.count, fitted && { fontSize: fitted.countSize, lineHeight: fitted.countLineHeight }, counterStyle, { transformOrigin: 'left bottom' }]} accessibilityLabel={`${player.lossCount} Verluste`}>
               {player.lossCount}
             </Animated.Text>
             <Text style={styles.countLabel}>{player.lossCount === 1 ? 'Verlust' : 'Verluste'}</Text>
@@ -199,7 +213,7 @@ const PlayerTile = memo(
             pressedScale={0.9}
             style={[styles.minus, { width: minusWidth, height: buttonHeight, opacity: canRemove ? 1 : 0.35 }]}
           >
-            <Ionicons name="remove" size={big ? 30 : 24} color={colors.text} />
+            <Ionicons name="remove" size={minusIcon} color={colors.text} />
           </PressableScale>
           <PressableScale
             accessibilityRole="button"
@@ -211,7 +225,7 @@ const PlayerTile = memo(
             pressedScale={0.94}
             style={[styles.plus, { height: buttonHeight, opacity: isClosed ? 0.4 : 1 }]}
           >
-            <Ionicons name="add" size={big ? 44 : 34} color={colors.buttonPrimaryText} />
+            <Ionicons name="add" size={plusIcon} color={colors.buttonPrimaryText} />
           </PressableScale>
         </View>
       </Animated.View>
@@ -227,7 +241,7 @@ const PlayerTile = memo(
         friction={1.6}
         rightThreshold={SWIPE_ACTION_WIDTH * 0.6}
         overshootRight={false}
-        containerStyle={{ width, borderRadius: radius.lg }}
+        containerStyle={{ width, height, borderRadius: radius.lg }}
         renderRightActions={(progress) => <VoidAction progress={progress} />}
         onSwipeableWillOpen={() => {
           if (canRemove) handleRemove()
@@ -245,6 +259,7 @@ const PlayerTile = memo(
     previous.player.lossCount === next.player.lossCount &&
     previous.player.todayCents === next.player.todayCents &&
     previous.width === next.width &&
+    previous.height === next.height &&
     previous.big === next.big &&
     previous.leader === next.leader &&
     previous.swipeToVoid === next.swipeToVoid &&
@@ -270,6 +285,8 @@ export function PlayerBoard({
   swipeToVoid = false,
   showHeader = true,
   emptyHint = 'Noch niemand anwesend. Aktiviere im Schritt „Wer ist da?“ die gewünschten Spieler.',
+  tourTargetId,
+  fit = false,
 }: {
   players: BoardPlayer[]
   stakeCents: number
@@ -284,10 +301,18 @@ export function PlayerBoard({
   swipeToVoid?: boolean
   showHeader?: boolean
   emptyHint?: string
+  /** Registers the first tile as a first-use tour target. */
+  tourTargetId?: string
+  /**
+   * Tablets without page scroll: fill the parent's height and size the tiles
+   * so all players fit; scrolls inside the board only when that is impossible.
+   */
+  fit?: boolean
 }) {
   const styles = useStyles()
   const { width, isTablet, pagePadding } = useDeviceLayout()
   const [gridWidth, setGridWidth] = useState(0)
+  const [area, setArea] = useState({ width: 0, height: 0 })
   const gap = isTablet ? spacing.sm : spacing.xs + 4
 
   // Stable callbacks: a booking re-renders only the tiles whose numbers changed.
@@ -304,9 +329,51 @@ export function PlayerBoard({
   const columns = Math.max(1, columnsOverride ?? Math.min(4, Math.floor((measured + gap) / (minTile + gap))))
   const tileWidth: number | '100%' = columns <= 1 ? '100%' : Math.floor((measured - gap * (columns - 1)) / columns)
   const leaders = leaderIds(players)
+  const fitted = fit && area.width > 0 && area.height > 0 ? fitBoardGrid({ count: players.length, width: area.width, height: area.height, gap }) : null
+
+  const renderTile = (player: BoardPlayer, index: number, widthValue: number | '100%', heightValue?: number) => {
+    const tile = (
+      <PlayerTile
+        key={player.id}
+        player={player}
+        width={widthValue}
+        height={heightValue}
+        big={dense}
+        leader={leaders.has(player.id)}
+        swipeToVoid={swipeToVoid && !isClosed}
+        isClosed={isClosed}
+        onAdd={stableAdd}
+        onRemove={stableRemove}
+      />
+    )
+    if (index !== 0 || !tourTargetId) return tile
+    return (
+      <TourTarget key={player.id} id={tourTargetId} style={{ width: widthValue, height: heightValue }}>
+        {tile}
+      </TourTarget>
+    )
+  }
+
+  const fitGrid = fit ? (
+    <View
+      style={{ flex: 1, minHeight: 0 }}
+      onLayout={(event) => {
+        const { width: w, height: h } = event.nativeEvent.layout
+        setArea((current) => (Math.abs(current.width - w) < 1 && Math.abs(current.height - h) < 1 ? current : { width: Math.floor(w), height: Math.floor(h) }))
+      }}
+    >
+      {fitted ? (
+        <ScrollView scrollEnabled={!fitted.fits} nestedScrollEnabled showsVerticalScrollIndicator={!fitted.fits} style={{ flex: 1 }}>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap }}>
+            {players.map((player, index) => renderTile(player, index, fitted.tileWidth, fitted.tileHeight))}
+          </View>
+        </ScrollView>
+      ) : null}
+    </View>
+  ) : null
 
   return (
-    <View style={{ gap: spacing.sm }}>
+    <View style={[{ gap: spacing.sm }, fit && { flex: 1, minHeight: 0 }]}>
       {showHeader ? (
         <View style={styles.headerRow}>
           <View style={{ gap: 2, flex: 1 }}>
@@ -319,24 +386,12 @@ export function PlayerBoard({
 
       {players.length === 0 ? (
         <Text style={styles.empty}>{emptyHint}</Text>
-      ) : (
+      ) : fitGrid ? fitGrid : (
         <View
           onLayout={(event) => setGridWidth(Math.floor(event.nativeEvent.layout.width))}
           style={{ flexDirection: 'row', flexWrap: 'wrap', gap, alignItems: 'stretch' }}
         >
-          {players.map((player) => (
-            <PlayerTile
-              key={player.id}
-              player={player}
-              width={tileWidth}
-              big={dense}
-              leader={leaders.has(player.id)}
-              swipeToVoid={swipeToVoid && !isClosed}
-              isClosed={isClosed}
-              onAdd={stableAdd}
-              onRemove={stableRemove}
-            />
-          ))}
+          {players.map((player, index) => renderTile(player, index, tileWidth))}
         </View>
       )}
       {swipeToVoid && !isClosed && players.some((player) => player.lossCount > 0) ? (
