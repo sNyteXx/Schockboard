@@ -70,6 +70,17 @@ describe('buildEveningSummary', () => {
     expect(summary.totalCents).toBe(600 + 500 + 334)
   })
 
+  it('adds beer rounds of present regulars to the average only when enabled', () => {
+    // present regulars: 5,00 € losses + 5,00 € beer round → 10,00 € ÷ 3 = 3,33 €
+    const on = buildEveningSummary(input({ beerRoundsInAverage: true }))
+    expect(on.absenceChargeCents).toBe(333)
+    expect(on.absenceMath?.baseCents).toBe(1000)
+    // Guest beer rounds never count, only regulars who are present.
+    const guestBeer = buildEveningSummary(input({ beerRoundsInAverage: true, losses: [loss('a'), loss('g', 500, true), loss('d', 500, true)] }))
+    expect(guestBeer.absenceMath?.baseCents).toBe(100)
+    expect(buildEveningSummary(input({ beerRoundsInAverage: false })).absenceChargeCents).toBe(167)
+  })
+
   it('splits the rounded average among absent regulars', () => {
     const summary = buildEveningSummary(input({ absencePenaltyMode: 'split_absent' }))
     expect(summary.absenceChargeCents).toBe(84)

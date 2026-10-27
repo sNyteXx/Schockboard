@@ -568,6 +568,7 @@ export function adminRoutes(deps: { config: ServerConfig; store: Store; snapshot
     }
 
     if (connectionState(store, device.id).transfer) return c.json({ error: 'transfer_locked', message: 'Umzug aktiv. Auf diesem Gerät sind Buchungsaufträge gesperrt.' }, 409)
+    if (request.data.type === 'settings.update' && payload.beerRoundsInAverage !== undefined && (store.getSnapshotMeta(device.id)?.schemaVersion ?? 0) < 11) return c.json({ error: 'upgrade_required', message: 'Diese Einstellung benötigt die aktuelle Version von Schockboard Next auf dem ausgewählten Gerät.' }, 409)
     if ((request.data.type === 'loss.record' || request.data.type === 'beerround.record' || (request.data.type === 'settings.update' && ['hapticsEnabled', 'achievementAnimations', 'autoBackup'].some(key => payload[key] !== undefined))) && (store.getSnapshotMeta(device.id)?.schemaVersion ?? 0) < 10) return c.json({ error: 'upgrade_required', message: 'Diese Funktion benötigt Schockboard Next auf dem ausgewählten Gerät.' }, 409)
     store.db.exec('BEGIN IMMEDIATE')
     try {

@@ -18,10 +18,11 @@ const MODES: Array<{ value: AppSettingsRecord['absencePenaltyMode']; label: stri
 export function SettingsPage() {
   const { pending, device, status } = useApp()
   const supportsNext = (status?.schemaVersion ?? 0) >= 10
+  const supportsBeerAverage = (status?.schemaVersion ?? 0) >= 11
   const backups = useApi<Array<{ name: string; size: number; at: string }>>('/backups')
   const settings = useApi<AppSettingsRecord>('/settings')
   const { run, busy } = useQueue()
-  const [form, setForm] = useState({ stake: '', label: '', mode: 'full_average' as AppSettingsRecord['absencePenaltyMode'], hapticsEnabled: true, achievementAnimations: true, autoBackup: true })
+  const [form, setForm] = useState({ stake: '', label: '', mode: 'full_average' as AppSettingsRecord['absencePenaltyMode'], hapticsEnabled: true, achievementAnimations: true, autoBackup: true, beerRoundsInAverage: false })
   const [error, setError] = useState<string | null>(null)
   const pendingSettings = pending.filter((command) => command.type === 'settings.update')
 
@@ -31,7 +32,7 @@ export function SettingsPage() {
         stake: (settings.data.defaultStakeCents / 100).toFixed(2).replace('.', ','),
         label: settings.data.cashboxLabel,
         mode: settings.data.absencePenaltyMode,
-        hapticsEnabled: settings.data.hapticsEnabled, achievementAnimations: settings.data.achievementAnimations, autoBackup: settings.data.autoBackup,
+        hapticsEnabled: settings.data.hapticsEnabled, achievementAnimations: settings.data.achievementAnimations, autoBackup: settings.data.autoBackup, beerRoundsInAverage: settings.data.beerRoundsInAverage ?? false,
       })
     }
   }, [settings.data])
@@ -46,7 +47,7 @@ export function SettingsPage() {
       setError((problem as Error).message)
       return
     }
-    await run('settings.update', { defaultStakeCents, cashboxLabel: form.label.trim(), absencePenaltyMode: form.mode, ...(supportsNext ? { hapticsEnabled: form.hapticsEnabled, achievementAnimations: form.achievementAnimations, autoBackup: form.autoBackup } : {}) }, 'Einstellungen beauftragt.')
+    await run('settings.update', { defaultStakeCents, cashboxLabel: form.label.trim(), absencePenaltyMode: form.mode, ...(supportsNext ? { hapticsEnabled: form.hapticsEnabled, achievementAnimations: form.achievementAnimations, autoBackup: form.autoBackup } : {}), ...(supportsBeerAverage ? { beerRoundsInAverage: form.beerRoundsInAverage } : {}) }, 'Einstellungen beauftragt.')
   }
 
   return (
@@ -92,6 +93,7 @@ export function SettingsPage() {
                 </div>
               </fieldset>
               {([['hapticsEnabled', 'Vibration auf dem Gerät'], ['achievementAnimations', 'Erfolgsanimationen auf dem Gerät'], ['autoBackup', 'Automatische Sicherung beim Abendabschluss']] as const).map(([key, label]) => <label key={key} className="check-row"><input type="checkbox" disabled={!supportsNext} checked={form[key]} onChange={event => setForm({ ...form, [key]: event.target.checked })} />{label}</label>)}
+              <label className="check-row"><input type="checkbox" disabled={!supportsBeerAverage} checked={form.beerRoundsInAverage} onChange={event => setForm({ ...form, beerRoundsInAverage: event.target.checked })} />Bierrunden im Durchschnitt berücksichtigen</label>
               {!supportsNext ? <Notice>Vibration, Erfolgsanimationen und automatische Sicherungen benötigen Schockboard Next.</Notice> : null}
               {error ? <Notice tone="danger">{error}</Notice> : null}
               <div className="form-actions">
@@ -109,6 +111,8 @@ export function SettingsPage() {
               <dd>{settings.data.cashboxLabel}</dd>
               <dt>Abwesenheit</dt>
               <dd>{MODES.find((mode) => mode.value === settings.data!.absencePenaltyMode)?.label}</dd>
+              <dt>Bierrunden im Durchschnitt</dt>
+              <dd>{settings.data.beerRoundsInAverage ? 'Ja' : 'Nein'}</dd>
             </dl>
             {pendingSettings.length > 0 ? (
               <div className="pending-note">

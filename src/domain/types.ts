@@ -31,6 +31,8 @@ export type AppSettingsRecord = {
   hapticsEnabled: boolean
   achievementAnimations: boolean
   autoBackup: boolean
+  /** Count beer rounds of present regulars into the absence average (off by default). */
+  beerRoundsInAverage: boolean
 }
 
 export type AuthAccount = {

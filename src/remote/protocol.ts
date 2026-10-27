@@ -57,6 +57,7 @@ export const commandSchemas = {
     hapticsEnabled: z.boolean().optional(),
     achievementAnimations: z.boolean().optional(),
     autoBackup: z.boolean().optional(),
+    beerRoundsInAverage: z.boolean().optional(),
   }),
   /** Removes a booked loss or beer round of an evening that is still open. */
   'loss.void': z.object({
