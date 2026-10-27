@@ -37,6 +37,8 @@ export type EveningSummaryInput = {
   /** Absence charges already booked (only exist for closed evenings). */
   absences: SummaryAbsence[]
   absencePenaltyMode: AbsencePenaltyMode
+  /** Count beer rounds of present regulars into the absence average. */
+  beerRoundsInAverage?: boolean
 }
 
 export type EveningSummaryPlayer = {
@@ -162,7 +164,10 @@ export function buildEveningSummary(input: EveningSummaryInput): EveningSummary 
     const booked = input.absences.reduce((sum, row) => sum + row.amountCents, 0)
     if (absentCoreRows.length > 0 && booked === 0) absenceSkipReason = 'not-charged'
   } else if (absentCoreRows.length > 0) {
-    const totalPresentCoreLossCents = presentCore.reduce((sum, row) => sum + (byId.get(row.playerId)?.lossCents ?? 0), 0)
+    const totalPresentCoreLossCents = presentCore.reduce((sum, row) => {
+      const player = byId.get(row.playerId)
+      return sum + (player?.lossCents ?? 0) + (input.beerRoundsInAverage ? (player?.beerRoundCents ?? 0) : 0)
+    }, 0)
     if (input.absencePenaltyMode === 'none') {
       absenceSkipReason = 'disabled'
     } else if (presentCore.length === 0) {
@@ -224,7 +229,7 @@ export function buildEveningSummary(input: EveningSummaryInput): EveningSummary 
 }
 
 /** Maps the session detail returned by getSessionDetail() to summary input. */
-export function summaryInputFromDetail(detail: SessionDetail, absencePenaltyMode: AbsencePenaltyMode): EveningSummaryInput {
+export function summaryInputFromDetail(detail: SessionDetail, absencePenaltyMode: AbsencePenaltyMode, beerRoundsInAverage = false): EveningSummaryInput {
   return {
     status: detail.session.status,
     // Archived players never take part (same rule as closeSession).
@@ -234,6 +239,7 @@ export function summaryInputFromDetail(detail: SessionDetail, absencePenaltyMode
     losses: detail.losses.map((loss) => ({ playerId: loss.playerId, playerName: loss.playerName, amountCents: loss.amountCents, isBeerRound: loss.isBeerRound })),
     absences: detail.absences.map((row) => ({ playerId: row.playerId, playerName: row.playerName, amountCents: row.amountCents })),
     absencePenaltyMode,
+    beerRoundsInAverage,
   }
 }
 

@@ -308,6 +308,15 @@ const MIGRATIONS = [
       ALTER TABLE app_settings ADD COLUMN auto_backup INTEGER NOT NULL DEFAULT 1;
     `,
   },
+  {
+    version: 11,
+    name: 'beer_rounds_in_average',
+    sql: `
+      -- Opt-in: count beer rounds of present regulars into the absence
+      -- average. Off keeps every existing calculation unchanged.
+      ALTER TABLE app_settings ADD COLUMN beer_rounds_in_average INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ]
 
 export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Schockboard Next",
     "slug": "schockboard-next",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "scheme": "schockboard-next",
     "orientation": "default",
     "icon": "./assets/next-icon.png",
@@ -20,7 +20,7 @@
     },
     "android": {
       "package": "de.schockboard.next",
-      "versionCode": 209,
+      "versionCode": 210,
       "adaptiveIcon": {
         "backgroundColor": "#101210",
         "foregroundImage": "./assets/next-icon-foreground.png",

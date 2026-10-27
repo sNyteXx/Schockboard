@@ -137,6 +137,7 @@ export default function SessionDetailScreen() {
   const detailData = resource.data?.detail ?? null
   const currentDetail = detailData && detailData.session.id === id ? detailData : null
   const absenceMode: AbsencePenaltyMode = resource.data?.settings.absencePenaltyMode ?? 'full_average'
+  const beerRoundsInAverage = resource.data?.settings.beerRoundsInAverage ?? false
   // The first-use tour only runs its evening steps on an open, loaded evening.
   useTourScreen('evening', focused && currentDetail?.session.status === 'open')
 
@@ -162,9 +163,9 @@ export default function SessionDetailScreen() {
       timeline: currentDetail.timeline.filter(
         (entry) => entry.kind === 'loss' || entry.kind === 'beerround' || (entry.kind === 'correction' && entry.amountCents !== 0)
       ),
-      summary: buildEveningSummary(summaryInputFromDetail(currentDetail, absenceMode)),
+      summary: buildEveningSummary(summaryInputFromDetail(currentDetail, absenceMode, beerRoundsInAverage)),
     }
-  }, [currentDetail, absenceMode])
+  }, [currentDetail, absenceMode, beerRoundsInAverage])
 
   // Pick the starting step once per evening: closed → summary, untouched → attendance.
   useEffect(() => {

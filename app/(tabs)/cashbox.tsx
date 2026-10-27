@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { View } from "react-native";
 
 import { BottomSheet } from "@/components/bottom-sheet";
@@ -37,6 +37,7 @@ import { useRuntime } from "@/providers/runtime-provider";
 import { CashboxService } from "@/services/cashbox-service";
 import { Feedback } from "@/services/haptics";
 import { SessionService } from "@/services/session-service";
+import { createSingleFlight } from "@/services/single-flight";
 import { colors, spacing } from "@/theme/tokens";
 
 const AMOUNT_PRESETS = [500, 1000, 2000];
@@ -63,11 +64,12 @@ export default function CashboxScreen() {
   const [amount, setAmount] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [note, setNote] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [withdrawAmount, setWithdrawAmount] = useState("");
   const [withdrawNote, setWithdrawNote] = useState("");
+  // One tap = one booking, even if the button is hit twice before the form resets.
+  const bookOnce = useRef(createSingleFlight()).current;
 
   useEffect(() => {
     if (!data.data) {
@@ -120,10 +122,9 @@ export default function CashboxScreen() {
     if (!isTablet) setSheetOpen(true);
   }
 
-  async function handleRecordPayment() {
+  function handleRecordPayment() {
     try {
-      setSubmitting(true);
-      CashboxService.recordPayment({
+      const booked = bookOnce(() => CashboxService.recordPayment({
         actor: {
           accountId: runtime.account!.id,
           username: runtime.account!.username,
@@ -132,7 +133,8 @@ export default function CashboxScreen() {
         amountCents: parseEuroToCents(amount),
         note: cleanOptionalText(note),
         sessionId: sessionId || null,
-      });
+      }));
+      if (!booked) return;
       Feedback.success();
       runtime.bumpDataVersion();
       runtime.setFlash({
@@ -149,18 +151,17 @@ export default function CashboxScreen() {
         type: "error",
         message: caught instanceof Error ? caught.message : "Zahlung konnte nicht verbucht werden.",
       });
-    } finally {
-      setSubmitting(false);
     }
   }
 
   function handleRecordWithdrawal() {
     try {
-      CashboxService.recordWithdrawal({
+      const booked = bookOnce(() => CashboxService.recordWithdrawal({
         actor: { accountId: runtime.account!.id, username: runtime.account!.username },
         amountCents: parseEuroToCents(withdrawAmount),
         note: withdrawNote,
-      });
+      }));
+      if (!booked) return;
       Feedback.success();
       runtime.bumpDataVersion();
       runtime.setFlash({ type: "success", message: "Entnahme verbucht." });
@@ -238,7 +239,7 @@ export default function CashboxScreen() {
       <Field label="Notiz">
         <Input value={note} onChangeText={setNote} placeholder="Optional: Bar, PayPal, Rundung …" />
       </Field>
-      <Button size="lg" icon="checkmark" onPress={handleRecordPayment} loading={submitting} disabled={!playerId || !amount.trim()}>
+      <Button size="lg" icon="checkmark" onPress={handleRecordPayment} disabled={!playerId || !amount.trim()}>
         Zahlung verbuchen
       </Button>
     </Stack>

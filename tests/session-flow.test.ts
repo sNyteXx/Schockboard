@@ -15,6 +15,7 @@ import {
   createPlayer,
   createSession,
   deleteLastLoss,
+  getAppSettings,
   getDebtSummaries,
   getSessionDetail,
   toggleAttendance,
@@ -75,6 +76,61 @@ describe('closing an evening', () => {
 
     expect(charged).toEqual(preview)
     expect(charged).toEqual(mode === 'split_absent' ? [84, 84] : [167, 167])
+  })
+
+  it.each<AbsencePenaltyMode>(['full_average', 'split_absent'])('counts beer rounds of present regulars into the average when enabled, preview matching the charge (%s)', (mode) => {
+    const { sessionId, present, absent } = setUpEvening(mode)
+    for (const playerId of [present[0], present[0], present[1], present[1], present[2]]) {
+      addLossEntry({ actor, sessionId, playerId, note: null })
+    }
+    addBeerRoundEntry({ actor, sessionId, playerId: present[2], amountCents: 500, note: null })
+    // Beer round of an absent regular is no basis for anyone.
+    updateAppSettings({ actor, defaultStakeCents: 100, cashboxLabel: 'Kasse', absencePenaltyMode: mode, beerRoundsInAverage: true })
+
+    const preview = absent.map(absenceOf)
+    closeSession({ actor, sessionId })
+    const charged = absent.map(absenceOf)
+
+    // (5 × 1,00 € + 5,00 €) ÷ 3 present = 3,33 €
+    expect(charged).toEqual(preview)
+    expect(charged).toEqual(mode === 'split_absent' ? [167, 167] : [333, 333])
+  })
+
+  it('keeps the previous calculation when the option is off and persists the switch', () => {
+    const { sessionId, present, absent } = setUpEvening('full_average')
+    expect(getAppSettings().beerRoundsInAverage).toBe(false)
+    addLossEntry({ actor, sessionId, playerId: present[0], note: null })
+    addBeerRoundEntry({ actor, sessionId, playerId: present[1], amountCents: 900, note: null })
+    expect(absent.map(absenceOf)).toEqual([33, 33])
+
+    updateAppSettings({ actor, defaultStakeCents: 100, cashboxLabel: 'Kasse', absencePenaltyMode: 'full_average', beerRoundsInAverage: true })
+    expect(getAppSettings().beerRoundsInAverage).toBe(true)
+    expect(absent.map(absenceOf)).toEqual([333, 333])
+
+    // Omitting the flag leaves it untouched; switching off restores the old result.
+    updateAppSettings({ actor, defaultStakeCents: 100, cashboxLabel: 'Kasse', absencePenaltyMode: 'full_average' })
+    expect(getAppSettings().beerRoundsInAverage).toBe(true)
+    updateAppSettings({ actor, defaultStakeCents: 100, cashboxLabel: 'Kasse', absencePenaltyMode: 'full_average', beerRoundsInAverage: false })
+    expect(absent.map(absenceOf)).toEqual([33, 33])
+    // Historic entries are never rewritten.
+    expect(memory.current.getFirstSync<{ n: number }>('SELECT SUM(amount_cents) AS n FROM loss_entries')!.n).toBe(1000)
+  })
+
+  it('charges nothing for an evening with only beer rounds unless enabled', () => {
+    const { sessionId, present, absent } = setUpEvening('full_average')
+    addBeerRoundEntry({ actor, sessionId, playerId: present[0], amountCents: 600, note: null })
+    expect(absent.map(absenceOf)).toEqual([0, 0])
+    updateAppSettings({ actor, defaultStakeCents: 100, cashboxLabel: 'Kasse', absencePenaltyMode: 'full_average', beerRoundsInAverage: true })
+    expect(absent.map(absenceOf)).toEqual([200, 200])
+    closeSession({ actor, sessionId })
+    expect(absent.map(absenceOf)).toEqual([200, 200])
+  })
+
+  it('does not charge absence on an evening without any bookings, whatever the switch', () => {
+    const { sessionId, absent } = setUpEvening('full_average')
+    updateAppSettings({ actor, defaultStakeCents: 100, cashboxLabel: 'Kasse', absencePenaltyMode: 'full_average', beerRoundsInAverage: true })
+    expect(closeSession({ actor, sessionId }).absenceChargeCount).toBe(0)
+    expect(absent.map(absenceOf)).toEqual([0, 0])
   })
 
   it('never assesses absence charges twice', () => {

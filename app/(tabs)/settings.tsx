@@ -92,7 +92,7 @@ export default function SettingsScreen() {
   const [cashboxLabel, setCashboxLabel] = useState("Getränkekasse");
   const [absencePenaltyMode, setAbsencePenaltyMode] = useState<AbsencePenaltyMode>("full_average");
   const [newPlayer, setNewPlayer] = useState("");
-  const [preferences, setPreferences] = useState({ hapticsEnabled: true, achievementAnimations: true, autoBackup: true });
+  const [preferences, setPreferences] = useState({ hapticsEnabled: true, achievementAnimations: true, autoBackup: true, beerRoundsInAverage: false });
   const [backups, setBackups] = useState(() => BackupService.listLocal());
   const [backupBusy, setBackupBusy] = useState(false);
 
@@ -102,7 +102,7 @@ export default function SettingsScreen() {
     }
 
     setBackups(BackupService.listLocal());
-    setPreferences({ hapticsEnabled: data.data.settings.hapticsEnabled, achievementAnimations: data.data.settings.achievementAnimations, autoBackup: data.data.settings.autoBackup });
+    setPreferences({ hapticsEnabled: data.data.settings.hapticsEnabled, achievementAnimations: data.data.settings.achievementAnimations, autoBackup: data.data.settings.autoBackup, beerRoundsInAverage: data.data.settings.beerRoundsInAverage });
     setDefaultStake((data.data.settings.defaultStakeCents / 100).toFixed(2).replace(".", ","));
     setCashboxLabel(data.data.settings.cashboxLabel);
     setAbsencePenaltyMode(data.data.settings.absencePenaltyMode);
@@ -359,6 +359,13 @@ export default function SettingsScreen() {
         <AppText variant="body" tone="muted">
           Beim Abschließen eines Spielabends bestimmt diese Regel, ob und wie automatische Abwesenheitsbeträge für fehlende Stammspieler entstehen.
         </AppText>
+        <Split>
+          <Stack gap={2}>
+            <AppText>Bierrunden im Durchschnitt berücksichtigen</AppText>
+            <AppText variant="caption" tone="muted">Aus: nur Verluste zählen. An: Bierrunden der anwesenden Stammspieler erhöhen den Abwesenheitsdurchschnitt.</AppText>
+          </Stack>
+          <Switch accessibilityLabel="Bierrunden im Durchschnitt berücksichtigen" value={preferences.beerRoundsInAverage} onValueChange={value => setPreferences(current => ({ ...current, beerRoundsInAverage: value }))} />
+        </Split>
         <Stack gap={spacing.xs}>
           {absencePenaltyOptions.map((option) => (
             <OptionCard

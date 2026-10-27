@@ -160,8 +160,9 @@ export function getAppSettings(): AppSettingsRecord {
     haptics_enabled: number
     achievement_animations: number
     auto_backup: number
+    beer_rounds_in_average: number
   }>(
-    "SELECT default_stake_cents, currency, cashbox_label, rule_profile_json, view_mode, theme_id, absence_penalty_mode, haptics_enabled, achievement_animations, auto_backup FROM app_settings WHERE id = 'app'"
+    "SELECT default_stake_cents, currency, cashbox_label, rule_profile_json, view_mode, theme_id, absence_penalty_mode, haptics_enabled, achievement_animations, auto_backup, beer_rounds_in_average FROM app_settings WHERE id = 'app'"
   )
 
   if (!row) {
@@ -173,7 +174,7 @@ export function getAppSettings(): AppSettingsRecord {
       viewMode: 'basic',
       themeId: 'bvb09',
       absencePenaltyMode: 'full_average',
-      hapticsEnabled: true, achievementAnimations: true, autoBackup: true,
+      hapticsEnabled: true, achievementAnimations: true, autoBackup: true, beerRoundsInAverage: false,
     }
   }
 
@@ -187,6 +188,7 @@ export function getAppSettings(): AppSettingsRecord {
     hapticsEnabled: Boolean(row.haptics_enabled),
     achievementAnimations: Boolean(row.achievement_animations),
     autoBackup: Boolean(row.auto_backup),
+    beerRoundsInAverage: Boolean(row.beer_rounds_in_average),
     absencePenaltyMode: (row.absence_penalty_mode as AbsencePenaltyMode) ?? 'full_average',
   }
 }
@@ -200,6 +202,7 @@ export function updateAppSettings(input: {
   hapticsEnabled?: boolean
   achievementAnimations?: boolean
   autoBackup?: boolean
+  beerRoundsInAverage?: boolean
 }) {
   assertWritable()
   const sets = [
@@ -215,7 +218,7 @@ export function updateAppSettings(input: {
     $updatedAt: nowIso(),
   }
 
-  for (const [key, column] of [['hapticsEnabled', 'haptics_enabled'], ['achievementAnimations', 'achievement_animations'], ['autoBackup', 'auto_backup']] as const) {
+  for (const [key, column] of [['hapticsEnabled', 'haptics_enabled'], ['achievementAnimations', 'achievement_animations'], ['autoBackup', 'auto_backup'], ['beerRoundsInAverage', 'beer_rounds_in_average']] as const) {
     if (input[key] !== undefined) {
       if (typeof input[key] !== 'boolean') throw new Error('Ungültige Einstellung.')
       sets.push(`${column} = $${key}`)
@@ -239,6 +242,7 @@ export function updateAppSettings(input: {
       defaultStakeCents: input.defaultStakeCents,
       cashboxLabel: input.cashboxLabel,
       absencePenaltyMode: input.absencePenaltyMode,
+      beerRoundsInAverage: input.beerRoundsInAverage,
       viewMode: input.viewMode,
     },
   })
@@ -537,7 +541,7 @@ export function getDebtSummaries() {
         INNER JOIN session_attendance sa3 ON sa3.session_id = le.session_id AND sa3.player_id = le.player_id
         INNER JOIN players p3 ON p3.id = le.player_id
         INNER JOIN sessions s3 ON s3.id = le.session_id
-        WHERE sa3.present = 1 AND p3.is_core = 1 AND p3.is_archived = 0 AND s3.status = 'open' AND le.is_beer_round = 0
+        WHERE sa3.present = 1 AND p3.is_core = 1 AND p3.is_archived = 0 AND s3.status = 'open' AND (le.is_beer_round = 0 OR $beerRoundsInAverage = 1)
         GROUP BY le.session_id
       ),
       pending_absence_totals AS (
@@ -604,6 +608,7 @@ export function getDebtSummaries() {
     `,
     {
       $absencePenaltyMode: settings.absencePenaltyMode,
+      $beerRoundsInAverage: settings.beerRoundsInAverage ? 1 : 0,
     }
   )
 
@@ -1559,10 +1564,11 @@ function closeSessionUnsafe(input: { actor: Actor; sessionId: string }) {
       `
         SELECT amount_cents
         FROM loss_entries
-        WHERE session_id = $sessionId AND player_id IN (${placeholders}) AND is_beer_round = 0
+        WHERE session_id = $sessionId AND player_id IN (${placeholders}) AND (is_beer_round = 0 OR $beerRoundsInAverage = 1)
       `,
       {
         $sessionId: input.sessionId,
+        $beerRoundsInAverage: settings.beerRoundsInAverage ? 1 : 0,
         ...params,
       }
     )
@@ -1654,6 +1660,7 @@ function closeSessionUnsafe(input: { actor: Actor; sessionId: string }) {
       presentCoreCount: presentCoreIds.length,
       absentCoreCount: absentCoreIds.length,
       absencePenaltyMode: settings.absencePenaltyMode,
+      beerRoundsInAverage: settings.beerRoundsInAverage,
       absenceChargeCount,
       absenceChargesSkipped: skippedAbsenceCharges,
       skipReason: absenceReason,

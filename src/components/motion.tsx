@@ -11,7 +11,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated'
 
-import { easeOutCubic } from '@/components/motion-math'
+import { countUpValue } from '@/components/motion-math'
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable)
 /** Calm, non-overshooting curve used for all UI motion. */
@@ -95,7 +95,7 @@ export function AnimatedNumber({
     let frame = 0
     const tick = () => {
       const progress = (Date.now() - startedAt) / duration
-      const next = progress >= 1 ? value : Math.round(from + (value - from) * easeOutCubic(progress))
+      const next = countUpValue(from, value, progress)
       setDisplay(next)
       fromRef.current = next
       if (progress < 1) frame = requestAnimationFrame(tick)
@@ -105,7 +105,9 @@ export function AnimatedNumber({
   }, [value, duration, reduceMotion])
 
   return (
-    <Text style={style} numberOfLines={numberOfLines} adjustsFontSizeToFit={numberOfLines === 1}>
+    // Auto-fit re-measures on every text change; while counting that makes the
+    // tile jitter, so it only applies once the number has settled.
+    <Text style={style} numberOfLines={numberOfLines} adjustsFontSizeToFit={numberOfLines === 1 && display === value}>
       {format(display)}
     </Text>
   )

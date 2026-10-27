@@ -49,6 +49,7 @@ export const appSettings = sqliteTable('app_settings', {
   hapticsEnabled: integer('haptics_enabled', { mode: 'boolean' }).notNull().default(true),
   achievementAnimations: integer('achievement_animations', { mode: 'boolean' }).notNull().default(true),
   autoBackup: integer('auto_backup', { mode: 'boolean' }).notNull().default(true),
+  beerRoundsInAverage: integer('beer_rounds_in_average', { mode: 'boolean' }).notNull().default(false),
   absencePenaltyMode: text('absence_penalty_mode').notNull().default('full_average'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
